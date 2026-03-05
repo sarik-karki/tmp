@@ -44,7 +44,7 @@ def read_plate_from_api(api_url, plate_crop):
     return ''
 
 
-def entry_camera_loop(config, plate_matcher, stop_event):
+def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
     plate_detector = PlateDetector(
         model_path='models/plates/plate_detect_model.pt',
         conf=0.60,
@@ -72,7 +72,9 @@ def entry_camera_loop(config, plate_matcher, stop_event):
             time.sleep(0.1)
             continue
         plates = plate_detector.detect(frame)
+        annotated = frame.copy()
         for p in plates:
+            x1, y1, x2, y2 = p.bbox
             plate_crop = crop_bbox(frame, p.bbox)
             if plate_crop is None:
                 continue
@@ -80,6 +82,11 @@ def entry_camera_loop(config, plate_matcher, stop_event):
             if text:
                 print(f"Plate read at entry: {text}")
                 plate_matcher.push_plate(text)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            label = text if text else f"{p.conf:.2f}"
+            cv2.putText(annotated, label, (x1, max(0, y1 - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+        display_frame[0] = annotated
         time.sleep(poll_interval)
 
     grabber.release()
@@ -105,10 +112,11 @@ def main():
     plate_matcher = PlateMatcher(config)
     database      = VehicleDatabase('data/database.db')
 
-    stop_event   = threading.Event()
-    entry_thread = threading.Thread(
+    stop_event    = threading.Event()
+    entry_display = [None]  # shared frame holder: entry thread writes, main thread displays
+    entry_thread  = threading.Thread(
         target=entry_camera_loop,
-        args=(config, plate_matcher, stop_event),
+        args=(config, plate_matcher, stop_event, entry_display),
         daemon=True
     )
     entry_thread.start()
@@ -179,6 +187,8 @@ def main():
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
             cv2.imshow('Parking Monitor', frame)
+            if entry_display[0] is not None:
+                cv2.imshow('Entry Camera', entry_display[0])
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 

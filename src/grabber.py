@@ -1,4 +1,5 @@
 import threading
+import time
 import cv2
 
 
@@ -12,7 +13,8 @@ class LatestFrameGrabber:
         if not self.cap.isOpened():
             raise RuntimeError(f"Could not open video source: {source}")
 
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        if backend is not None or width is not None or height is not None:
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         if width is not None:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         if height is not None:
@@ -20,7 +22,7 @@ class LatestFrameGrabber:
 
         for _ in range(warmup_frames):
             self.cap.read()
-            import time; time.sleep(0.01)
+            time.sleep(0.01)
 
         self.lock = threading.Lock()
         self.frame = None
@@ -38,7 +40,6 @@ class LatestFrameGrabber:
                 if ok:
                     self.frame = frame
             if not ok:
-                import time
                 time.sleep(0.01)
 
     def read(self):
