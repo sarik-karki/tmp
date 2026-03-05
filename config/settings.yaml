@@ -1,0 +1,34 @@
+camera:
+  source: ${CAMERA_URL} 
+  width: 1280
+  height: 720
+  fps: 15 
+
+detection:
+  model_path: models/vehicle/vehicle_detect_model.pt
+  confidence: 0.5
+  classes: [2,5,7]
+
+tracking:
+  config: config/bytetrack.yaml
+  max_age: 30 
+
+spaces:
+  config: config/parking_spaces.json
+
+alerts:
+  enabled: true
+  cooldown_seconds: 30
+  email: ${ALERT_EMAIL}
+
+entry_camera:
+  source: ${ENTRY_CAMERA_URL}
+
+plate_reader:
+  api_url: ${PLATE_READER_API}
+  poll_interval: 1
+
+entry_zone:
+  polygon: [[0, 600], [200, 600], [200, 720], [0, 720]]
+
+

@@ -1,0 +1,9 @@
+ultralytics>=8.0.0
+PyYAML
+python-dotenv
+opencv-python
+numpy
+scipy
+filterpy
+lap
+requests
