@@ -38,8 +38,15 @@ def main():
     )
 
     # ---- Real-time capture ----
-    # source=0 for webcam; source="sample.mp4" for file; source="rtsp://..." for RTSP
-    grabber = LatestFrameGrabber(source=0)
+    # ELP Camera (Overhead) on Raspberry Pi via V4L2
+    # Use source=2 for NexiGo N60 (Entrance) camera
+    grabber = LatestFrameGrabber(
+        source=0,
+        backend=cv2.CAP_V4L2,
+        width=1280,
+        height=720,
+        warmup_frames=30,
+    )
 
     fps_t0 = time.time()
     fps_count = 0

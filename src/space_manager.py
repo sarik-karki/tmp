@@ -10,6 +10,7 @@ class SpaceManager:
         self.spaces = {}
         self.space_status = {}
         self.space_occupants = {}
+        self._space_centers = {}
 
         if spaces_file and Path(spaces_file).exists():
             self.load_spaces(spaces_file)
@@ -19,10 +20,12 @@ class SpaceManager:
             data = json.load(f)
 
         self.spaces = {}
+        self._space_centers = {}
         for name, points in data.items():
             self.spaces[name] = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
             self.space_status[name] = 'empty'
             self.space_occupants[name] = None
+            self._space_centers[name] = self.get_space_center(name)
 
         print(f"Loaded {len(self.spaces)} parking spaces")
 
@@ -40,12 +43,14 @@ class SpaceManager:
         self.spaces[name] = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
         self.space_status[name] = 'empty'
         self.space_occupants[name] = None
+        self._space_centers[name] = self.get_space_center(name)
 
     def remove_space(self, name):
         if name in self.spaces:
             del self.spaces[name]
             del self.space_status[name]
             del self.space_occupants[name]
+            del self._space_centers[name]
 
     def get_space(self, point):
         for name, polygon in self.spaces.items():
@@ -121,8 +126,6 @@ class SpaceManager:
         return (cx, cy)
 
     def draw_spaces(self, frame, show_labels=True, show_status=True):
-        frame = frame.copy()
-
         colors = {
             'empty': (0, 255, 0),
             'occupied': (0, 0, 255),
@@ -139,7 +142,7 @@ class SpaceManager:
             cv2.polylines(frame, [polygon], True, color, 2)
 
             if show_labels:
-                center = self.get_space_center(name)
+                center = self._space_centers.get(name)
                 if center:
                     label = name
                     (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)

@@ -53,7 +53,13 @@ def entry_camera_loop(config, plate_matcher, stop_event):
     poll_interval = config.get('plate_reader', {}).get('poll_interval', 1)
 
     try:
-        grabber = LatestFrameGrabber(config['entry_camera']['source'])
+        grabber = LatestFrameGrabber(
+            source=config['entry_camera']['source'],
+            backend=cv2.CAP_V4L2,
+            width=1280,
+            height=720,
+            warmup_frames=30,
+        )
     except RuntimeError as e:
         print(f"Entry camera unavailable: {e}")
         return
@@ -107,8 +113,16 @@ def main():
     )
     entry_thread.start()
 
-    grabber = LatestFrameGrabber(config['camera']['source'])
+    grabber = LatestFrameGrabber(
+        source=config['camera']['source'],
+        backend=cv2.CAP_V4L2,
+        width=1280,
+        height=720,
+        warmup_frames=30,
+    )
     print("Running — press Q to quit.")
+
+    TRACK_W, TRACK_H = 640, 360  # downscale for YOLO inference
 
     try:
         while True:
@@ -117,7 +131,19 @@ def main():
                 time.sleep(0.01)
                 continue
 
-            vehicles = tracker.update(frame)
+            H, W = frame.shape[:2]
+            track_frame = cv2.resize(frame, (TRACK_W, TRACK_H))
+            vehicles = tracker.update(track_frame)
+
+            # Scale bboxes and centers back to full resolution for drawing/space checks
+            scale_x = W / TRACK_W
+            scale_y = H / TRACK_H
+            for v in vehicles:
+                x1, y1, x2, y2 = v['bbox']
+                v['bbox'] = [x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y]
+                cx, cy = v['center']
+                v['center'] = (int(cx * scale_x), int(cy * scale_y))
+
             space_manager.update_occupancy(vehicles)
 
             for v in tracker.get_entered():
