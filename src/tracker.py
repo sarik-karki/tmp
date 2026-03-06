@@ -5,28 +5,42 @@ import time
 
 class VehicleTracker:
 
-    def __init__(self, model_path='yolov8s.pt', tracker_config='config/bytetrack.yaml', confidence=0.5, fps=30):
-        self.model_path = model_path  
+    def __init__(self, model_path='yolov8s.pt', tracker_config='config/bytetrack.yaml',
+                 confidence=0.5, fps=30, process_every_n=1, imgsz=416):
+        self.model_path = model_path
         self.model = YOLO(model_path)
         self.tracker_config = tracker_config
         self.confidence = confidence
         self.fps = fps
+        self.imgsz = imgsz
 
         self.vehicle_classes = [0, 1, 2, 3]
 
-        self.active_tracks = {}     
-        self.track_history = {}      
-        self.exited_tracks = []      
-        self.entered_tracks = []    
+        self.active_tracks = {}
+        self.track_history = {}
+        self.exited_tracks = []
+        self.entered_tracks = []
 
         # Config for exit detection
-        self.max_missing_frames = 30  
-        self.max_history_age = 300    
+        self.max_missing_frames = 30
+        self.max_history_age = 300
+
+        # Frame skipping: only run YOLO every N frames
+        self.process_every_n = max(1, process_every_n)
+        self._frame_count = 0
+        self._last_vehicles = []
 
     def update(self, frame):
-       
+
         self.entered_tracks = []
         self.exited_tracks = []
+
+        self._frame_count += 1
+
+        # On skipped frames, reuse last results but still check exits
+        if self.process_every_n > 1 and self._frame_count % self.process_every_n != 0:
+            self._check_exits(set(self.active_tracks.keys()))
+            return self._last_vehicles
 
         results = self.model.track(
             source=frame,
@@ -34,6 +48,7 @@ class VehicleTracker:
             persist=True,
             conf=self.confidence,
             classes=self.vehicle_classes,
+            imgsz=self.imgsz,
             verbose=False
         )
 
@@ -82,6 +97,7 @@ class VehicleTracker:
 
         self._check_exits(current_ids)
 
+        self._last_vehicles = current_vehicles
         return current_vehicles
 
     def _check_exits(self, current_ids):
@@ -147,4 +163,6 @@ class VehicleTracker:
         self.track_history = {}
         self.exited_tracks = []
         self.entered_tracks = []
+        self._frame_count = 0
+        self._last_vehicles = []
         self.model = YOLO(self.model_path)

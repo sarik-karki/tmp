@@ -11,6 +11,7 @@ class SpaceManager:
         self.space_status = {}
         self.space_occupants = {}
         self._space_centers = {}
+        self._space_bboxes = {}
 
         if spaces_file and Path(spaces_file).exists():
             self.load_spaces(spaces_file)
@@ -21,11 +22,14 @@ class SpaceManager:
 
         self.spaces = {}
         self._space_centers = {}
+        self._space_bboxes = {}
         for name, points in data.items():
             self.spaces[name] = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
             self.space_status[name] = 'empty'
             self.space_occupants[name] = None
             self._space_centers[name] = self.get_space_center(name)
+            x, y, w, h = cv2.boundingRect(self.spaces[name])
+            self._space_bboxes[name] = (x, y, x + w, y + h)
 
         print(f"Loaded {len(self.spaces)} parking spaces")
 
@@ -44,6 +48,8 @@ class SpaceManager:
         self.space_status[name] = 'empty'
         self.space_occupants[name] = None
         self._space_centers[name] = self.get_space_center(name)
+        x, y, w, h = cv2.boundingRect(self.spaces[name])
+        self._space_bboxes[name] = (x, y, x + w, y + h)
 
     def remove_space(self, name):
         if name in self.spaces:
@@ -51,10 +57,17 @@ class SpaceManager:
             del self.space_status[name]
             del self.space_occupants[name]
             del self._space_centers[name]
+            self._space_bboxes.pop(name, None)
 
     def get_space(self, point):
+        px, py = float(point[0]), float(point[1])
         for name, polygon in self.spaces.items():
-            result = cv2.pointPolygonTest(polygon, (float(point[0]), float(point[1])), False)
+            # Fast bounding-rect pre-filter before expensive polygon test
+            if name in self._space_bboxes:
+                x1, y1, x2, y2 = self._space_bboxes[name]
+                if px < x1 or px > x2 or py < y1 or py > y2:
+                    continue
+            result = cv2.pointPolygonTest(polygon, (px, py), False)
             if result >= 0:
                 return name
 

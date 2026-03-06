@@ -68,7 +68,7 @@ class VehicleDetector:
         conf: float = 0.35,
         iou: float = 0.5,
         classes: Optional[Sequence[int]] = None,
-        imgsz: Union[int, Tuple[int, int]] = 640,
+        imgsz: Union[int, Tuple[int, int]] = 416,
         device: Optional[Union[int, str]] = None,
         half: bool = False,
         max_det: int = 300,

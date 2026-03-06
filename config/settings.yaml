@@ -1,13 +1,15 @@
 camera:
-  source: ${CAMERA_URL} 
-  width: 1280
-  height: 720
-  fps: 15 
+  source: ${CAMERA_URL}
+  width: 640
+  height: 480
+  fps: 10
 
 detection:
   model_path: models/vehicle/vehicle_detect_model.pt
   confidence: 0.5
   classes: [2,5,7]
+  imgsz: 416
+  process_every_n: 3
 
 tracking:
   config: config/bytetrack.yaml
