@@ -7,3 +7,4 @@ scipy
 filterpy
 lap
 requests
+hailort  # required for Hailo AI Hat backend

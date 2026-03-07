@@ -6,13 +6,20 @@ import time
 class VehicleTracker:
 
     def __init__(self, model_path='yolov8s.pt', tracker_config='config/bytetrack.yaml',
-                 confidence=0.5, fps=30, process_every_n=1, imgsz=416):
+                 confidence=0.5, fps=30, process_every_n=1, imgsz=416,
+                 detector=None):
         self.model_path = model_path
-        self.model = YOLO(model_path)
         self.tracker_config = tracker_config
         self.confidence = confidence
         self.fps = fps
         self.imgsz = imgsz
+
+        # If an external detector (e.g. Hailo) is provided, use it instead of YOLO
+        self.detector = detector
+        if detector is None:
+            self.model = YOLO(model_path)
+        else:
+            self.model = None
 
         self.vehicle_classes = [0, 1, 2, 3]
 
@@ -25,10 +32,14 @@ class VehicleTracker:
         self.max_missing_frames = 30
         self.max_history_age = 300
 
-        # Frame skipping: only run YOLO every N frames
+        # Frame skipping: only run detection every N frames
         self.process_every_n = max(1, process_every_n)
         self._frame_count = 0
         self._last_vehicles = []
+
+        # Simple track ID assignment for external detector mode
+        self._next_track_id = 1
+        self._iou_threshold = 0.3
 
     def update(self, frame):
 
@@ -41,6 +52,9 @@ class VehicleTracker:
         if self.process_every_n > 1 and self._frame_count % self.process_every_n != 0:
             self._check_exits(set(self.active_tracks.keys()))
             return self._last_vehicles
+
+        if self.detector is not None:
+            return self._update_with_external_detector(frame)
 
         results = self.model.track(
             source=frame,
@@ -99,6 +113,95 @@ class VehicleTracker:
 
         self._last_vehicles = current_vehicles
         return current_vehicles
+
+    def _update_with_external_detector(self, frame):
+        """Run detection via external detector (Hailo) and do simple IoU tracking."""
+        detections = self.detector.detect(frame)
+
+        current_vehicles = []
+        current_ids = set()
+        now = time.time()
+
+        # Match detections to existing tracks by IoU
+        unmatched_dets = list(range(len(detections)))
+        matched = {}
+
+        if self.active_tracks and detections:
+            for track_id, prev in self.active_tracks.items():
+                best_iou = 0
+                best_idx = -1
+                for di in unmatched_dets:
+                    iou = self._compute_iou(prev['bbox'], list(detections[di].bbox))
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_idx = di
+                if best_iou >= self._iou_threshold and best_idx >= 0:
+                    matched[track_id] = best_idx
+                    unmatched_dets.remove(best_idx)
+
+        # Update matched tracks
+        for track_id, di in matched.items():
+            det = detections[di]
+            bbox = list(det.bbox)
+            center = self._get_center(bbox)
+            vehicle = {
+                'track_id': track_id,
+                'bbox': bbox,
+                'center': center,
+                'confidence': det.conf,
+                'class_id': det.cls,
+                'class_name': self._get_class_name(det.cls),
+                'timestamp': now
+            }
+            current_vehicles.append(vehicle)
+            current_ids.add(track_id)
+            self.active_tracks[track_id] = vehicle
+
+        # Create new tracks for unmatched detections
+        for di in unmatched_dets:
+            det = detections[di]
+            if self.vehicle_classes and det.cls not in self.vehicle_classes:
+                continue
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            bbox = list(det.bbox)
+            center = self._get_center(bbox)
+            vehicle = {
+                'track_id': track_id,
+                'bbox': bbox,
+                'center': center,
+                'confidence': det.conf,
+                'class_id': det.cls,
+                'class_name': self._get_class_name(det.cls),
+                'timestamp': now
+            }
+            current_vehicles.append(vehicle)
+            current_ids.add(track_id)
+            self.active_tracks[track_id] = vehicle
+            self.entered_tracks.append(vehicle)
+            self.track_history[track_id] = {
+                'first_seen': now,
+                'entry_position': center,
+                'class_name': vehicle['class_name']
+            }
+
+        self._check_exits(current_ids)
+
+        self._last_vehicles = current_vehicles
+        return current_vehicles
+
+    @staticmethod
+    def _compute_iou(box_a, box_b):
+        x1 = max(box_a[0], box_b[0])
+        y1 = max(box_a[1], box_b[1])
+        x2 = min(box_a[2], box_b[2])
+        y2 = min(box_a[3], box_b[3])
+        inter = max(0, x2 - x1) * max(0, y2 - y1)
+        if inter == 0:
+            return 0.0
+        area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+        area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+        return inter / (area_a + area_b - inter)
 
     def _check_exits(self, current_ids):
 
@@ -165,4 +268,6 @@ class VehicleTracker:
         self.entered_tracks = []
         self._frame_count = 0
         self._last_vehicles = []
-        self.model = YOLO(self.model_path)
+        self._next_track_id = 1
+        if self.model is not None:
+            self.model = YOLO(self.model_path)

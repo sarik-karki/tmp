@@ -5,11 +5,21 @@ camera:
   fps: 10
 
 detection:
+  # Set backend to "hailo" to use AI Hat, or "yolo" for CPU inference
+  backend: hailo
   model_path: models/vehicle/vehicle_detect_model.pt
+  # HEF model for Hailo (export with: yolo export model=vehicle_detect_model.pt format=hailo)
+  hailo_model_path: models/vehicle/vehicle_detect_model.hef
   confidence: 0.5
   classes: [2,5,7]
   imgsz: 416
-  process_every_n: 3
+  process_every_n: 1
+
+plate_detection:
+  backend: hailo
+  model_path: models/plates/plate_detect_model.pt
+  hailo_model_path: models/plates/plate_detect_model.hef
+  confidence: 0.3
 
 tracking:
   config: config/bytetrack.yaml
