@@ -74,33 +74,42 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
     lpr_cfg = config.get('lpr', {})
 
     # --- Plate detector (bounding box) ---
-    if plate_det_cfg.get('backend') == 'hailo':
-        plate_detector = HailoPlateDetector(
-            model_path=plate_det_cfg.get('hailo_model_path', 'models/plates/plate_detect_model.hef'),
-            conf=plate_det_cfg.get('confidence', 0.60),
-        )
-        print("Plate detector: Hailo NPU")
-    else:
-        plate_detector = PlateDetector(
-            model_path=plate_det_cfg.get('model_path', 'models/plates/plate_detect_model.pt'),
-            conf=plate_det_cfg.get('confidence', 0.60),
-        )
-        print("Plate detector: CPU")
+    try:
+        if plate_det_cfg.get('backend') == 'hailo':
+            plate_detector = HailoPlateDetector(
+                model_path=plate_det_cfg.get('hailo_model_path', 'models/plates/plate_detect_model.hef'),
+                conf=plate_det_cfg.get('confidence', 0.60),
+            )
+            print("Plate detector: Hailo NPU")
+        else:
+            plate_detector = PlateDetector(
+                model_path=plate_det_cfg.get('model_path', 'models/plates/plate_detect_model.pt'),
+                conf=plate_det_cfg.get('confidence', 0.60),
+            )
+            print("Plate detector: CPU")
+    except Exception as e:
+        print(f"Plate detector failed to load: {e}")
+        return
 
     # --- LPR reader (character recognition) ---
     lpr_reader = None
-    if lpr_cfg.get('backend') == 'hailo' and HailoLPRReader is not None:
-        lpr_reader = HailoLPRReader(
-            model_path=lpr_cfg.get('hailo_model_path', 'models/lpr/lprnet.hef'),
-        )
-        print("LPR reader: Hailo NPU")
-    elif lpr_cfg.get('model_path') and LPRReader is not None:
-        lpr_reader = LPRReader(
-            model_path=lpr_cfg['model_path'],
-        )
-        print("LPR reader: ONNX CPU")
+    lpr_model = lpr_cfg.get('model_path', '')
+    lpr_hailo_model = lpr_cfg.get('hailo_model_path', '')
+
+    if lpr_cfg.get('backend') == 'hailo' and HailoLPRReader is not None and os.path.isfile(lpr_hailo_model):
+        try:
+            lpr_reader = HailoLPRReader(model_path=lpr_hailo_model)
+            print("LPR reader: Hailo NPU")
+        except Exception as e:
+            print(f"LPR reader (Hailo) failed: {e} — will use API fallback")
+    elif LPRReader is not None and lpr_model and os.path.isfile(lpr_model):
+        try:
+            lpr_reader = LPRReader(model_path=lpr_model)
+            print("LPR reader: ONNX CPU")
+        except Exception as e:
+            print(f"LPR reader (ONNX) failed: {e} — will use API fallback")
     else:
-        print("LPR reader: not configured")
+        print("LPR reader: model not found — will use API fallback")
 
     # Fallback to API if no local LPR model
     api_url = config.get('plate_reader', {}).get('api_url', '') if lpr_reader is None else ''
