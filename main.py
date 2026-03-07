@@ -56,8 +56,10 @@ def read_plate_from_api(api_url, plate_crop):
         )
         if response.ok:
             return response.json().get('plate', '').upper().strip()
-    except requests.RequestException:
-        pass
+        else:
+            print(f"Plate API error: HTTP {response.status_code}")
+    except requests.RequestException as e:
+        print(f"Plate API request failed: {e}")
     return ''
 
 
@@ -98,29 +100,42 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
     lpr_hailo_model = lpr_cfg.get('hailo_model_path', '')
     lpr_backend = lpr_cfg.get('backend', '')
 
+    # Auto-detect backend from file extension if not explicitly set
+    if not lpr_backend:
+        if lpr_model.endswith('.pth'):
+            lpr_backend = 'pytorch'
+        elif lpr_model.endswith('.onnx'):
+            lpr_backend = 'onnx'
+        elif lpr_hailo_model and os.path.isfile(lpr_hailo_model):
+            lpr_backend = 'hailo'
+
     if lpr_backend == 'hailo' and HailoLPRReader is not None and os.path.isfile(lpr_hailo_model):
         try:
             lpr_reader = HailoLPRReader(model_path=lpr_hailo_model)
             print("LPR reader: Hailo NPU")
         except Exception as e:
             print(f"LPR reader (Hailo) failed: {e} — will use API fallback")
-    elif lpr_backend == 'onnx' and LPRReader is not None and lpr_model and os.path.isfile(lpr_model):
+    elif lpr_backend == 'onnx' and LPRReader is not None and os.path.isfile(lpr_model):
         try:
             lpr_reader = LPRReader(model_path=lpr_model)
             print("LPR reader: ONNX CPU")
         except Exception as e:
             print(f"LPR reader (ONNX) failed: {e} — will use API fallback")
-    elif lpr_model and lpr_model.endswith('.pth') and os.path.isfile(lpr_model):
+    elif lpr_backend == 'pytorch' and PyTorchLPRReader is not None and os.path.isfile(lpr_model):
         try:
             lpr_reader = PyTorchLPRReader(model_path=lpr_model)
             print("LPR reader: PyTorch CPU")
         except Exception as e:
             print(f"LPR reader (PyTorch) failed: {e} — will use API fallback")
     else:
-        print("LPR reader: model not found — will use API fallback")
+        print(f"LPR reader: no model found (backend={lpr_backend!r}, path={lpr_model!r}) — will use API fallback")
 
     # Fallback to API if no local LPR model
     api_url = config.get('plate_reader', {}).get('api_url', '') if lpr_reader is None else ''
+    if lpr_reader is None and api_url:
+        print(f"LPR fallback: using API at {api_url}")
+    elif lpr_reader is None:
+        print("WARNING: No LPR reader and no API URL configured — plates will not be read")
 
     try:
         grabber = LatestFrameGrabber(
