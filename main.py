@@ -25,6 +25,12 @@ except ImportError:
     HailoVehicleDetector = None
     HailoPlateDetector = None
 
+try:
+    from src.lprReader import LPRReader, HailoLPRReader
+except ImportError:
+    LPRReader = None
+    HailoLPRReader = None
+
 
 def load_config(path):
     with open(path, 'r') as f:
@@ -65,7 +71,9 @@ def _api_read_worker(api_url, plate_crop, plate_matcher, result_queue):
 def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
     entry_cam_cfg = config.get('entry_camera', {})
     plate_det_cfg = config.get('plate_detection', {})
+    lpr_cfg = config.get('lpr', {})
 
+    # --- Plate detector (bounding box) ---
     if plate_det_cfg.get('backend') == 'hailo':
         plate_detector = HailoPlateDetector(
             model_path=plate_det_cfg.get('hailo_model_path', 'models/plates/plate_detect_model.hef'),
@@ -78,7 +86,24 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
             conf=plate_det_cfg.get('confidence', 0.60),
         )
         print("Plate detector: CPU")
-    api_url = config.get('plate_reader', {}).get('api_url', '')
+
+    # --- LPR reader (character recognition) ---
+    lpr_reader = None
+    if lpr_cfg.get('backend') == 'hailo' and HailoLPRReader is not None:
+        lpr_reader = HailoLPRReader(
+            model_path=lpr_cfg.get('hailo_model_path', 'models/lpr/lprnet.hef'),
+        )
+        print("LPR reader: Hailo NPU")
+    elif lpr_cfg.get('model_path') and LPRReader is not None:
+        lpr_reader = LPRReader(
+            model_path=lpr_cfg['model_path'],
+        )
+        print("LPR reader: ONNX CPU")
+    else:
+        print("LPR reader: not configured")
+
+    # Fallback to API if no local LPR model
+    api_url = config.get('plate_reader', {}).get('api_url', '') if lpr_reader is None else ''
 
     try:
         grabber = LatestFrameGrabber(
@@ -95,8 +120,6 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
 
     print("Entry camera running.")
 
-    api_results = []
-
     while not stop_event.is_set():
         if not grabber.has_new_frame():
             time.sleep(0.02)
@@ -108,7 +131,6 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
             continue
 
         plates = plate_detector.detect(frame)
-        api_results.clear()
 
         annotated = frame
         for p in plates:
@@ -117,16 +139,26 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
             if plate_crop is None:
                 continue
 
-            # Fire API call in background thread — don't block the loop
-            t = threading.Thread(
-                target=_api_read_worker,
-                args=(api_url, plate_crop.copy(), plate_matcher, api_results),
-                daemon=True
-            )
-            t.start()
+            text = ''
+            if lpr_reader is not None:
+                # On-device LPR — fast, no network call
+                text = lpr_reader.read(plate_crop)
+            elif api_url:
+                # Fallback to API in background
+                t = threading.Thread(
+                    target=_api_read_worker,
+                    args=(api_url, plate_crop.copy(), plate_matcher, []),
+                    daemon=True
+                )
+                t.start()
 
+            if text:
+                print(f"Plate read at entry: {text}")
+                plate_matcher.push_plate(text)
+
+            label = text if text else f"{p.conf:.2f}"
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(annotated, f"{p.conf:.2f}", (x1, max(0, y1 - 8)),
+            cv2.putText(annotated, label, (x1, max(0, y1 - 8)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
 
         display_frame[0] = annotated

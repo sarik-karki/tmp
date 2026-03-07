@@ -5,7 +5,7 @@ Provides drop-in replacements for VehicleDetector and PlateDetector
 that run inference on the Hailo NPU instead of CPU.
 
 Requirements:
-    pip install hailort
+    sudo apt install hailo-all
 
 Model prep:
     Export your YOLOv8 model to HEF format using Hailo's Dataflow Compiler (DFC).
@@ -27,7 +27,13 @@ try:
         InferVStreams, ConfigureParams,
     )
 except ImportError:
-    HEF = None
+    try:
+        from hailort import (
+            HEF, VDevice, HailoStreamInterface,
+            InferVStreams, ConfigureParams,
+        )
+    except ImportError:
+        HEF = None
 
 from src.vehicleDetector import VehicleDet, _clamp_bbox_xyxy as _clamp_vehicle
 from src.plateDetector import PlateDet, _clamp_bbox_xyxy as _clamp_plate
@@ -44,7 +50,7 @@ class _HailoDetectorBase:
     ) -> None:
         if HEF is None:
             raise ImportError(
-                "hailort is not installed. Install with: pip install hailort"
+                "hailort is not installed. Install with: sudo apt install hailo-all"
             )
 
         self.conf = float(conf)

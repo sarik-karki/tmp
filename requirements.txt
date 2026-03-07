@@ -1,7 +1,8 @@
 ultralytics>=8.0.0  # only needed for backend: yolo
+onnxruntime  # only needed for LPR backend: onnx
 PyYAML
 python-dotenv
 opencv-python
 numpy
 requests
-hailort  # only needed for backend: hailo
+# hailort — installed via: sudo apt install hailo-all (not available on PyPI)

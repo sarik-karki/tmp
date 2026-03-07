@@ -6,7 +6,7 @@ camera:
 
 detection:
   # Set backend to "hailo" to use AI Hat, or "yolo" for CPU inference
-  backend: hailo
+  backend: yolo
   model_path: models/vehicle/vehicle_detect_model.pt
   # HEF model for Hailo (export with: yolo export model=vehicle_detect_model.pt format=hailo)
   hailo_model_path: models/vehicle/vehicle_detect_model.hef
@@ -16,7 +16,7 @@ detection:
   process_every_n: 1
 
 plate_detection:
-  backend: hailo
+  backend: yolo
   model_path: models/plates/plate_detect_model.pt
   hailo_model_path: models/plates/plate_detect_model.hef
   confidence: 0.3
@@ -39,7 +39,14 @@ entry_camera:
   height: 480
   fps: 5
 
+lpr:
+  # Set backend to "hailo" for NPU, or omit for ONNX CPU
+  backend: onnx
+  model_path: models/lpr/lprnet.onnx
+  hailo_model_path: models/lpr/lprnet.hef
+
 plate_reader:
+  # Fallback API — only used if no LPR model is configured
   api_url: ${PLATE_READER_API}
   poll_interval: 1
 
