@@ -16,6 +16,13 @@ class PlateMatcher:
         self.unmatched_tracks = {}
         self.match_timeout = config.get('plate_reader', {}).get('poll_interval', 1) * 10
 
+        # Precompute bounding rect for fast rejection before polygon test
+        if len(self.entry_zone) > 0:
+            x, y, w, h = cv2.boundingRect(self.entry_zone)
+            self._zone_bbox = (x, y, x + w, y + h)
+        else:
+            self._zone_bbox = None
+
     def push_plate(self, plate_text, timestamp=None):
         if not plate_text:
             return
@@ -49,10 +56,14 @@ class PlateMatcher:
             self.unmatched_tracks.pop(track_id, None)
 
     def _in_entry_zone(self, center):
-        if self.entry_zone is None or len(self.entry_zone) == 0:
+        if self._zone_bbox is None:
+            return False
+        px, py = float(center[0]), float(center[1])
+        x1, y1, x2, y2 = self._zone_bbox
+        if px < x1 or px > x2 or py < y1 or py > y2:
             return False
         result = cv2.pointPolygonTest(
-            self.entry_zone, (float(center[0]), float(center[1])), False
+            self.entry_zone, (px, py), False
         )
         return result >= 0
 

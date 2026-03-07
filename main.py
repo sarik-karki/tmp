@@ -229,6 +229,8 @@ def main():
         hailo_detector = None
         print("Vehicle detector: CPU")
 
+    headless = config.get('display', {}).get('headless', False)
+
     tracker = VehicleTracker(
         model_path=det_cfg['model_path'],
         tracker_config=config['tracking']['config'],
@@ -294,30 +296,31 @@ def main():
                 print(f"Logged exit — plate: {plate}  space: {space}  duration: {v['duration']:.1f}s")
                 plate_matcher.release(v['track_id'])
 
-            frame = space_manager.draw_spaces(frame)
-            
-            # Draw the entry zone to help debugging
-            cv2.polylines(frame, [plate_matcher.entry_zone], isClosed=True, color=(0, 255, 255), thickness=2)
-            cv2.putText(frame, "Entry Zone", (plate_matcher.entry_zone[0][0][0], plate_matcher.entry_zone[0][0][1] - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            if not headless:
+                frame = space_manager.draw_spaces(frame)
 
-            for v in vehicles:
-                x1, y1, x2, y2 = [int(c) for c in v['bbox']]
-                plate = plate_matcher.get_plate(v['track_id'])
-                label = plate if plate else v['class_name']
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 200, 0), 2)
-                cv2.putText(frame, f"{label} #{v['track_id']}",
-                            (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
+                # Draw the entry zone to help debugging
+                cv2.polylines(frame, [plate_matcher.entry_zone], isClosed=True, color=(0, 255, 255), thickness=2)
+                cv2.putText(frame, "Entry Zone", (plate_matcher.entry_zone[0][0][0], plate_matcher.entry_zone[0][0][1] - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-            summary = space_manager.get_occupancy_summary()
-            cv2.putText(frame, f"Spaces: {summary['occupied']}/{summary['total']} occupied",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                for v in vehicles:
+                    x1, y1, x2, y2 = [int(c) for c in v['bbox']]
+                    plate = plate_matcher.get_plate(v['track_id'])
+                    label = plate if plate else v['class_name']
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 200, 0), 2)
+                    cv2.putText(frame, f"{label} #{v['track_id']}",
+                                (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
 
-            cv2.imshow('Parking Monitor', frame)
-            if entry_display[0] is not None:
-                cv2.imshow('Entry Camera', entry_display[0])
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+                summary = space_manager.get_occupancy_summary()
+                cv2.putText(frame, f"Spaces: {summary['occupied']}/{summary['total']} occupied",
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+                cv2.imshow('Parking Monitor', frame)
+                if entry_display[0] is not None:
+                    cv2.imshow('Entry Camera', entry_display[0])
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
 
     finally:
         stop_event.set()

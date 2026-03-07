@@ -1,3 +1,6 @@
+display:
+  headless: false  # set true on Pi to skip all drawing/imshow for max FPS
+
 camera:
   source: ${CAMERA_URL}
   width: 1280
@@ -13,7 +16,7 @@ detection:
   confidence: 0.5
   classes: [2,5,7]
   imgsz: 416
-  process_every_n: 1
+  process_every_n: 3
 
 plate_detection:
   backend: yolo

@@ -12,6 +12,7 @@ class SpaceManager:
         self.space_occupants = {}
         self._space_centers = {}
         self._space_bboxes = {}
+        self._label_metrics = {}
 
         if spaces_file and Path(spaces_file).exists():
             self.load_spaces(spaces_file)
@@ -30,6 +31,8 @@ class SpaceManager:
             self._space_centers[name] = self.get_space_center(name)
             x, y, w, h = cv2.boundingRect(self.spaces[name])
             self._space_bboxes[name] = (x, y, x + w, y + h)
+            (tw, th), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            self._label_metrics[name] = (tw, th)
 
         print(f"Loaded {len(self.spaces)} parking spaces")
 
@@ -50,6 +53,8 @@ class SpaceManager:
         self._space_centers[name] = self.get_space_center(name)
         x, y, w, h = cv2.boundingRect(self.spaces[name])
         self._space_bboxes[name] = (x, y, x + w, y + h)
+        (tw, th), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        self._label_metrics[name] = (tw, th)
 
     def remove_space(self, name):
         if name in self.spaces:
@@ -58,6 +63,7 @@ class SpaceManager:
             del self.space_occupants[name]
             del self._space_centers[name]
             self._space_bboxes.pop(name, None)
+            self._label_metrics.pop(name, None)
 
     def get_space(self, point):
         px, py = float(point[0]), float(point[1])
@@ -85,8 +91,6 @@ class SpaceManager:
             space = self.get_space(center)
 
             if space:
-                if self.space_occupants[space] is not None:
-                    print(f"Space {space} already occupied by track {self.space_occupants[space]}, overwriting with track {track_id}")
                 self.space_status[space] = 'occupied'
                 self.space_occupants[space] = track_id
 
@@ -157,13 +161,12 @@ class SpaceManager:
             if show_labels:
                 center = self._space_centers.get(name)
                 if center:
-                    label = name
-                    (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                    w, h = self._label_metrics.get(name, (0, 0))
                     cv2.rectangle(frame,
                                   (center[0] - w//2 - 2, center[1] - h//2 - 2),
                                   (center[0] + w//2 + 2, center[1] + h//2 + 2),
                                   color, -1)
-                    cv2.putText(frame, label,
+                    cv2.putText(frame, name,
                                 (center[0] - w//2, center[1] + h//2),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
