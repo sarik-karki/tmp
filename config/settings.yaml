@@ -35,6 +35,9 @@ alerts:
 
 entry_camera:
   source: ${ENTRY_CAMERA_URL}
+  width: 640
+  height: 480
+  fps: 5
 
 plate_reader:
   api_url: ${PLATE_READER_API}

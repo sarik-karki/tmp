@@ -7,8 +7,6 @@ Designed to match the VehicleDetector wrapper style:
 - Return standardized detections: bbox (xyxy pixel coords), conf, cls
 - Intended to run on a CAR CROP (ROI) for speed/accuracy:
       plate_dets = plate_detector.detect(car_crop_bgr)
-
-later we need to implement a hailo backend doing the samething
 """
 
 from __future__ import annotations

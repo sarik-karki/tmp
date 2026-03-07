@@ -5,7 +5,8 @@ import cv2
 
 class LatestFrameGrabber:
 
-    def __init__(self, source=0, backend=None, width=None, height=None, warmup_frames=0):
+    def __init__(self, source=0, backend=None, width=None, height=None,
+                 warmup_frames=0, target_fps=None):
         if backend is not None:
             self.cap = cv2.VideoCapture(source, backend)
         else:
@@ -28,6 +29,10 @@ class LatestFrameGrabber:
         self.frame = None
         self.ok = True
         self.stopped = False
+        self._new_frame = False
+
+        # Cap grab rate to avoid burning CPU
+        self._frame_interval = 1.0 / target_fps if target_fps else None
 
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -39,14 +44,22 @@ class LatestFrameGrabber:
                 self.ok = ok
                 if ok:
                     self.frame = frame
+                    self._new_frame = True
             if not ok:
-                time.sleep(0.01)
+                time.sleep(0.05)
+            elif self._frame_interval:
+                time.sleep(self._frame_interval)
 
     def read(self):
         with self.lock:
             if self.frame is None:
                 return False, None
-            return True, self.frame.copy()
+            self._new_frame = False
+            return True, self.frame
+
+    def has_new_frame(self):
+        with self.lock:
+            return self._new_frame
 
     def release(self):
         self.stopped = True

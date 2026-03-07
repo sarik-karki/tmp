@@ -12,8 +12,18 @@ from src.space_manager import SpaceManager
 from src.match import PlateMatcher
 from src.database import VehicleDatabase
 from src.grabber import LatestFrameGrabber
-from src.plateDetector import PlateDetector
 from src.crop import crop_bbox
+
+try:
+    from src.plateDetector import PlateDetector
+except ImportError:
+    PlateDetector = None
+
+try:
+    from src.hailoDetector import HailoVehicleDetector, HailoPlateDetector
+except ImportError:
+    HailoVehicleDetector = None
+    HailoPlateDetector = None
 
 
 def load_config(path):
@@ -44,21 +54,40 @@ def read_plate_from_api(api_url, plate_crop):
     return ''
 
 
+def _api_read_worker(api_url, plate_crop, plate_matcher, result_queue):
+    """Send plate crop to OCR API in background, push result if successful."""
+    text = read_plate_from_api(api_url, plate_crop)
+    if text:
+        plate_matcher.push_plate(text)
+    result_queue.append((plate_crop, text))
+
+
 def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
-    plate_detector = PlateDetector(
-        model_path='models/plates/plate_detect_model.pt',
-        conf=0.60,
-    )
-    api_url       = config.get('plate_reader', {}).get('api_url', '')
-    poll_interval = config.get('plate_reader', {}).get('poll_interval', 1)
+    entry_cam_cfg = config.get('entry_camera', {})
+    plate_det_cfg = config.get('plate_detection', {})
+
+    if plate_det_cfg.get('backend') == 'hailo':
+        plate_detector = HailoPlateDetector(
+            model_path=plate_det_cfg.get('hailo_model_path', 'models/plates/plate_detect_model.hef'),
+            conf=plate_det_cfg.get('confidence', 0.60),
+        )
+        print("Plate detector: Hailo NPU")
+    else:
+        plate_detector = PlateDetector(
+            model_path=plate_det_cfg.get('model_path', 'models/plates/plate_detect_model.pt'),
+            conf=plate_det_cfg.get('confidence', 0.60),
+        )
+        print("Plate detector: CPU")
+    api_url = config.get('plate_reader', {}).get('api_url', '')
 
     try:
         grabber = LatestFrameGrabber(
-            source=config['entry_camera']['source'],
+            source=entry_cam_cfg['source'],
             backend=cv2.CAP_V4L2,
-            width=1280,
-            height=720,
+            width=entry_cam_cfg.get('width', 640),
+            height=entry_cam_cfg.get('height', 480),
             warmup_frames=30,
+            target_fps=entry_cam_cfg.get('fps', 5),
         )
     except RuntimeError as e:
         print(f"Entry camera unavailable: {e}")
@@ -66,28 +95,41 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
 
     print("Entry camera running.")
 
+    api_results = []
+
     while not stop_event.is_set():
+        if not grabber.has_new_frame():
+            time.sleep(0.02)
+            continue
+
         ok, frame = grabber.read()
         if not ok:
             time.sleep(0.1)
             continue
+
         plates = plate_detector.detect(frame)
-        annotated = frame.copy()
+        api_results.clear()
+
+        annotated = frame
         for p in plates:
             x1, y1, x2, y2 = p.bbox
             plate_crop = crop_bbox(frame, p.bbox)
             if plate_crop is None:
                 continue
-            text = read_plate_from_api(api_url, plate_crop)
-            if text:
-                print(f"Plate read at entry: {text}")
-                plate_matcher.push_plate(text)
+
+            # Fire API call in background thread — don't block the loop
+            t = threading.Thread(
+                target=_api_read_worker,
+                args=(api_url, plate_crop.copy(), plate_matcher, api_results),
+                daemon=True
+            )
+            t.start()
+
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            label = text if text else f"{p.conf:.2f}"
-            cv2.putText(annotated, label, (x1, max(0, y1 - 8)),
+            cv2.putText(annotated, f"{p.conf:.2f}", (x1, max(0, y1 - 8)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+
         display_frame[0] = annotated
-        time.sleep(poll_interval)
 
     grabber.release()
 
@@ -102,11 +144,27 @@ def main():
         print(f"Error loading config: {e}")
         return
 
-    tracker       = VehicleTracker(
-        model_path=config['detection']['model_path'],
+    det_cfg = config['detection']
+
+    if det_cfg.get('backend') == 'hailo':
+        hailo_detector = HailoVehicleDetector(
+            model_path=det_cfg.get('hailo_model_path', 'models/vehicle/vehicle_detect_model.hef'),
+            conf=det_cfg['confidence'],
+            classes=det_cfg.get('classes'),
+        )
+        print("Vehicle detector: Hailo NPU")
+    else:
+        hailo_detector = None
+        print("Vehicle detector: CPU")
+
+    tracker = VehicleTracker(
+        model_path=det_cfg['model_path'],
         tracker_config=config['tracking']['config'],
-        confidence=config['detection']['confidence'],
-        fps=config['camera']['fps']
+        confidence=det_cfg['confidence'],
+        fps=config['camera']['fps'],
+        process_every_n=det_cfg.get('process_every_n', 1),
+        imgsz=det_cfg.get('imgsz', 416),
+        detector=hailo_detector,
     )
     space_manager = SpaceManager(config['spaces']['config'])
     plate_matcher = PlateMatcher(config)
@@ -121,16 +179,16 @@ def main():
     )
     entry_thread.start()
 
+    cam_cfg = config['camera']
     grabber = LatestFrameGrabber(
-        source=config['camera']['source'],
+        source=cam_cfg['source'],
         backend=cv2.CAP_V4L2,
-        width=1280,
-        height=720,
+        width=cam_cfg.get('width', 640),
+        height=cam_cfg.get('height', 480),
         warmup_frames=30,
+        target_fps=cam_cfg.get('fps', 10),
     )
     print("Running — press Q to quit.")
-
-    TRACK_W, TRACK_H = 640, 360  # downscale for YOLO inference
 
     try:
         while True:
@@ -139,18 +197,8 @@ def main():
                 time.sleep(0.01)
                 continue
 
-            H, W = frame.shape[:2]
-            track_frame = cv2.resize(frame, (TRACK_W, TRACK_H))
-            vehicles = tracker.update(track_frame)
-
-            # Scale bboxes and centers back to full resolution for drawing/space checks
-            scale_x = W / TRACK_W
-            scale_y = H / TRACK_H
-            for v in vehicles:
-                x1, y1, x2, y2 = v['bbox']
-                v['bbox'] = [x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y]
-                cx, cy = v['center']
-                v['center'] = (int(cx * scale_x), int(cy * scale_y))
+            # Feed frame directly to tracker — it handles resize internally via imgsz
+            vehicles = tracker.update(frame)
 
             space_manager.update_occupancy(vehicles)
 

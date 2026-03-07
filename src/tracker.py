@@ -1,6 +1,10 @@
 
-from ultralytics import YOLO
 import time
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 
 class VehicleTracker:
@@ -17,6 +21,11 @@ class VehicleTracker:
         # If an external detector (e.g. Hailo) is provided, use it instead of YOLO
         self.detector = detector
         if detector is None:
+            if YOLO is None:
+                raise ImportError(
+                    "ultralytics is not installed and no external detector provided. "
+                    "Install with: pip install ultralytics, or use backend: hailo"
+                )
             self.model = YOLO(model_path)
         else:
             self.model = None
@@ -269,5 +278,5 @@ class VehicleTracker:
         self._frame_count = 0
         self._last_vehicles = []
         self._next_track_id = 1
-        if self.model is not None:
+        if self.model is not None and YOLO is not None:
             self.model = YOLO(self.model_path)

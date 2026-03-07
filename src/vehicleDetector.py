@@ -21,8 +21,6 @@ from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-# Ultralytics is only needed for this backend.
-# If you later add a Hailo backend, keep its imports in a separate file.
 try:
     from ultralytics import YOLO
 except Exception as e: 
@@ -51,9 +49,6 @@ def _clamp_bbox_xyxy(b: BBox, w: int, h: int) -> Optional[BBox]:
     return (x1, y1, x2, y2)
 
 
-#this is the YOLOv7 version model
-#we later need to implement the hailo model
-#make sure that the hailo wrapper returns the same thing:bbox, confidence score, and the class ID
 class VehicleDetector:
     """
     Returns a list[VehicleDet] with:
