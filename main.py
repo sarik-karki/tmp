@@ -163,6 +163,8 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
             continue
 
         plates = plate_detector.detect(frame)
+        if plates:
+            print(f"Entry cam: {len(plates)} plate(s) detected")
 
         annotated = frame
         for p in plates:
@@ -174,7 +176,11 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
             text = ''
             if lpr_reader is not None:
                 # On-device LPR — fast, no network call
-                text = lpr_reader.read(plate_crop)
+                try:
+                    text = lpr_reader.read(plate_crop)
+                except Exception as e:
+                    print(f"LPR read error: {e}")
+                    text = ''
             elif api_url:
                 # Fallback to API in background
                 t = threading.Thread(
@@ -185,8 +191,10 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
                 t.start()
 
             if text:
-                print(f"Plate read at entry: {text}")
+                print(f"Plate read at entry: {text} (queue size: {plate_matcher.queue_size()})")
                 plate_matcher.push_plate(text)
+            elif lpr_reader is not None:
+                print(f"LPR returned empty for detected plate (crop size: {plate_crop.shape})")
 
             label = text if text else f"{p.conf:.2f}"
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
@@ -266,7 +274,9 @@ def main():
 
             space_manager.update_occupancy(vehicles)
 
-            for v in tracker.get_entered():
+            # Try to assign plates to ALL vehicles in the entry zone,
+            # not just newly entered — a vehicle may reach the zone after first appearing
+            for v in vehicles:
                 plate_matcher.try_assign(v['track_id'], v['center'])
 
             for v in tracker.get_exited():
@@ -285,6 +295,11 @@ def main():
                 plate_matcher.release(v['track_id'])
 
             frame = space_manager.draw_spaces(frame)
+            
+            # Draw the entry zone to help debugging
+            cv2.polylines(frame, [plate_matcher.entry_zone], isClosed=True, color=(0, 255, 255), thickness=2)
+            cv2.putText(frame, "Entry Zone", (plate_matcher.entry_zone[0][0][0], plate_matcher.entry_zone[0][0][1] - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
             for v in vehicles:
                 x1, y1, x2, y2 = [int(c) for c in v['bbox']]

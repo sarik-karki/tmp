@@ -33,7 +33,10 @@ class PlateMatcher:
             if self.plate_queue:
                 entry = self.plate_queue.popleft()
                 self.track_plate_map[track_id] = entry['plate']
+                print(f"Plate matched: track #{track_id} -> {entry['plate']}")
             else:
+                if track_id not in self.unmatched_tracks:
+                    print(f"Vehicle #{track_id} in entry zone, waiting for plate...")
                 self.unmatched_tracks[track_id] = time.time()
 
     def get_plate(self, track_id):
@@ -69,6 +72,7 @@ class PlateMatcher:
         entry = self.plate_queue.popleft()
         self.track_plate_map[oldest_track] = entry['plate']
         del self.unmatched_tracks[oldest_track]
+        print(f"Late plate match: track #{oldest_track} -> {entry['plate']}")
 
     def get_all(self):
         return dict(self.track_plate_map)
