@@ -2,15 +2,16 @@
 LPRNet license plate reader wrapper.
 
 Takes a cropped plate image and returns the plate text string.
-Supports two backends:
-  - ONNX (for dev/CPU): uses onnxruntime
-  - Hailo (for Pi with AI Hat): uses hailort HEF model
+Supports three backends:
+  - PyTorch (.pth): for CPU inference with trained weights
+  - ONNX (.onnx): uses onnxruntime
+  - Hailo (.hef): uses Hailo-8L NPU
 
 LPRNet outputs a sequence of character logits. We apply CTC greedy
 decoding (collapse repeats, remove blanks) to get the final text.
 
 Usage:
-    reader = LPRReader("models/lpr/lprnet.onnx")
+    reader = PyTorchLPRReader("models/lpr/lprnet.pth")
     text = reader.read(plate_crop_bgr)  # e.g. "7ABC123"
 """
 
@@ -22,17 +23,11 @@ import numpy as np
 import cv2
 
 
-# Standard LPRNet character set — update this to match your training
-CHARS = [
-    '-',  # 0 = CTC blank
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-    'U', 'V', 'W', 'X', 'Y', 'Z',
-]
+# Character set — index 0 is CTC blank, rest matches training
+CHARS = ['-'] + list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-# Standard LPRNet input size
-DEFAULT_INPUT_SIZE = (94, 24)  # (width, height)
+# Input size matching training config
+DEFAULT_INPUT_SIZE = (300, 75)  # (width, height)
 
 
 def ctc_greedy_decode(logits: np.ndarray, chars: list, blank_idx: int = 0) -> str:
@@ -62,6 +57,141 @@ def ctc_greedy_decode(logits: np.ndarray, chars: list, blank_idx: int = 0) -> st
     return ''.join(result)
 
 
+# ---------------------------------------------------------------------------
+# USLPRNet model architecture (must match training code exactly)
+# ---------------------------------------------------------------------------
+try:
+    import torch
+    import torch.nn as nn
+
+    class SmallBasicBlock(nn.Module):
+        def __init__(self, in_ch, out_ch):
+            super().__init__()
+            mid = out_ch // 4
+
+            self.block = nn.Sequential(
+                nn.Conv2d(in_ch, mid, kernel_size=1, bias=False),
+                nn.BatchNorm2d(mid),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(mid, mid, kernel_size=(3, 1), padding=(1, 0), bias=False),
+                nn.BatchNorm2d(mid),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(mid, mid, kernel_size=(1, 3), padding=(0, 1), bias=False),
+                nn.BatchNorm2d(mid),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(mid, out_ch, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_ch),
+            )
+
+            self.skip = None
+            if in_ch != out_ch:
+                self.skip = nn.Sequential(
+                    nn.Conv2d(in_ch, out_ch, kernel_size=1, bias=False),
+                    nn.BatchNorm2d(out_ch),
+                )
+
+            self.relu = nn.ReLU(inplace=True)
+
+        def forward(self, x):
+            identity = x if self.skip is None else self.skip(x)
+            return self.relu(self.block(x) + identity)
+
+    class USLPRNet(nn.Module):
+        def __init__(self, num_classes):
+            super().__init__()
+            self.backbone = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+
+                nn.MaxPool2d(kernel_size=3, stride=(1, 2), padding=1),
+
+                SmallBasicBlock(64, 128),
+                SmallBasicBlock(128, 128),
+                nn.MaxPool2d(kernel_size=3, stride=(2, 2), padding=1),
+
+                SmallBasicBlock(128, 256),
+                SmallBasicBlock(256, 256),
+                nn.MaxPool2d(kernel_size=3, stride=(2, 2), padding=1),
+
+                SmallBasicBlock(256, 256),
+                nn.Conv2d(256, 256, kernel_size=(4, 1), bias=False),
+                nn.BatchNorm2d(256),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(256, num_classes, kernel_size=1),
+            )
+
+        def forward(self, x):
+            x = self.backbone(x)       # [B, C, H, W]
+            x = x.mean(dim=2)          # [B, C, W]
+            x = x.permute(2, 0, 1)     # [T, B, C]
+            return x
+
+    _TORCH_AVAILABLE = True
+except ImportError:
+    _TORCH_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# PyTorch backend (.pth)
+# ---------------------------------------------------------------------------
+class PyTorchLPRReader:
+    """
+    Reads license plate text using a PyTorch LPRNet .pth weights file.
+    """
+
+    def __init__(
+        self,
+        model_path: str,
+        input_size: Tuple[int, int] = DEFAULT_INPUT_SIZE,
+        chars: Optional[list] = None,
+    ) -> None:
+        if not _TORCH_AVAILABLE:
+            raise ImportError("PyTorch is not installed. Install with: pip install torch")
+
+        self.chars = chars or CHARS
+        self.input_w, self.input_h = input_size
+
+        self.device = torch.device('cpu')
+        self.model = USLPRNet(num_classes=len(self.chars))
+
+        state = torch.load(model_path, map_location=self.device, weights_only=False)
+        # Handle both raw state_dict and wrapped checkpoint
+        if isinstance(state, dict) and 'state_dict' in state:
+            state = state['state_dict']
+        elif isinstance(state, dict) and 'model_state_dict' in state:
+            state = state['model_state_dict']
+        self.model.load_state_dict(state, strict=True)
+        self.model.eval()
+
+    def read(self, plate_crop: np.ndarray) -> str:
+        if plate_crop is None or plate_crop.size == 0:
+            return ''
+
+        preprocessed = self._preprocess(plate_crop)
+        with torch.no_grad():
+            logits = self.model(preprocessed)
+
+        # USLPRNet returns [T, B, C] — extract batch item 0 → [T, C]
+        logits_np = logits[:, 0, :].cpu().numpy()
+        return ctc_greedy_decode(logits_np, self.chars)
+
+    def _preprocess(self, img: np.ndarray) -> torch.Tensor:
+        resized = cv2.resize(img, (self.input_w, self.input_h))
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        normalized = rgb.astype(np.float32) / 255.0
+        transposed = np.transpose(normalized, (2, 0, 1))
+        tensor = torch.from_numpy(transposed).unsqueeze(0).to(self.device)
+        return tensor
+
+
+# ---------------------------------------------------------------------------
+# ONNX backend (.onnx)
+# ---------------------------------------------------------------------------
 class LPRReader:
     """
     Reads license plate text from a cropped plate image.
@@ -93,15 +223,6 @@ class LPRReader:
             self.input_w = shape[3]
 
     def read(self, plate_crop: np.ndarray) -> str:
-        """
-        Read plate text from a BGR crop.
-
-        Args:
-            plate_crop: np.ndarray (H, W, 3) uint8
-
-        Returns:
-            Plate text string, e.g. "7ABC123". Empty string if unreadable.
-        """
         if plate_crop is None or plate_crop.size == 0:
             return ''
 
@@ -110,22 +231,22 @@ class LPRReader:
         outputs = self.session.run(None, {self.input_name: preprocessed})
         logits = outputs[0]
 
-        # Remove batch dim if present
         if logits.ndim == 3:
             logits = logits[0]
 
         return ctc_greedy_decode(logits, self.chars)
 
     def _preprocess(self, img: np.ndarray) -> np.ndarray:
-        """Resize, normalize, transpose to NCHW float32."""
         resized = cv2.resize(img, (self.input_w, self.input_h))
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         normalized = rgb.astype(np.float32) / 255.0
-        # HWC -> CHW -> NCHW
         transposed = np.transpose(normalized, (2, 0, 1))
         return np.expand_dims(transposed, axis=0)
 
 
+# ---------------------------------------------------------------------------
+# Hailo backend (.hef)
+# ---------------------------------------------------------------------------
 class HailoLPRReader:
     """
     Reads license plate text using Hailo-8L NPU.

@@ -26,10 +26,11 @@ except ImportError:
     HailoPlateDetector = None
 
 try:
-    from src.lprReader import LPRReader, HailoLPRReader
+    from src.lprReader import LPRReader, HailoLPRReader, PyTorchLPRReader
 except ImportError:
     LPRReader = None
     HailoLPRReader = None
+    PyTorchLPRReader = None
 
 
 def load_config(path):
@@ -95,19 +96,26 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
     lpr_reader = None
     lpr_model = lpr_cfg.get('model_path', '')
     lpr_hailo_model = lpr_cfg.get('hailo_model_path', '')
+    lpr_backend = lpr_cfg.get('backend', '')
 
-    if lpr_cfg.get('backend') == 'hailo' and HailoLPRReader is not None and os.path.isfile(lpr_hailo_model):
+    if lpr_backend == 'hailo' and HailoLPRReader is not None and os.path.isfile(lpr_hailo_model):
         try:
             lpr_reader = HailoLPRReader(model_path=lpr_hailo_model)
             print("LPR reader: Hailo NPU")
         except Exception as e:
             print(f"LPR reader (Hailo) failed: {e} — will use API fallback")
-    elif LPRReader is not None and lpr_model and os.path.isfile(lpr_model):
+    elif lpr_backend == 'onnx' and LPRReader is not None and lpr_model and os.path.isfile(lpr_model):
         try:
             lpr_reader = LPRReader(model_path=lpr_model)
             print("LPR reader: ONNX CPU")
         except Exception as e:
             print(f"LPR reader (ONNX) failed: {e} — will use API fallback")
+    elif lpr_model and lpr_model.endswith('.pth') and os.path.isfile(lpr_model):
+        try:
+            lpr_reader = PyTorchLPRReader(model_path=lpr_model)
+            print("LPR reader: PyTorch CPU")
+        except Exception as e:
+            print(f"LPR reader (PyTorch) failed: {e} — will use API fallback")
     else:
         print("LPR reader: model not found — will use API fallback")
 

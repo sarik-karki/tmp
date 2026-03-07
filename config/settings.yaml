@@ -1,7 +1,7 @@
 camera:
   source: ${CAMERA_URL}
-  width: 640
-  height: 480
+  width: 1280
+  height: 720
   fps: 10
 
 detection:
@@ -40,9 +40,8 @@ entry_camera:
   fps: 5
 
 lpr:
-  # Set backend to "hailo" for NPU, or omit for ONNX CPU
-  backend: onnx
-  model_path: models/lpr/lprnet.onnx
+  # backend: hailo, onnx, or leave empty for auto-detect from model_path extension
+  model_path: models/lpr/lprnet.pth
   hailo_model_path: models/lpr/lprnet.hef
 
 plate_reader:
