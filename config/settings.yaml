@@ -1,5 +1,5 @@
 display:
-  headless: false  # set true on Pi to skip all drawing/imshow for max FPS
+  headless: true
 
 camera:
   source: ${CAMERA_URL}

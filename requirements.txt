@@ -2,5 +2,5 @@ ultralytics>=8.0.0
 pytesseract
 PyYAML
 python-dotenv
-opencv-python
+opencv-python-headless
 numpy
