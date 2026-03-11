@@ -1,8 +1,6 @@
-ultralytics>=8.0.0  # only needed for backend: yolo
-onnxruntime  # only needed for LPR backend: onnx
+ultralytics>=8.0.0
+pytesseract
 PyYAML
 python-dotenv
 opencv-python
 numpy
-requests
-# hailort — installed via: sudo apt install hailo-all (not available on PyPI)

@@ -1,10 +1,9 @@
 import threading
 import time
-import yaml
 import os
 import re
 import cv2
-import requests
+import yaml
 from dotenv import load_dotenv
 
 from src.tracker import VehicleTracker
@@ -13,24 +12,12 @@ from src.match import PlateMatcher
 from src.database import VehicleDatabase
 from src.grabber import LatestFrameGrabber
 from src.crop import crop_bbox
+from src.plateDetector import PlateDetector
 
 try:
-    from src.plateDetector import PlateDetector
+    from src.lprReader import OCRPlateReader
 except ImportError:
-    PlateDetector = None
-
-try:
-    from src.hailoDetector import HailoVehicleDetector, HailoPlateDetector
-except ImportError:
-    HailoVehicleDetector = None
-    HailoPlateDetector = None
-
-try:
-    from src.lprReader import LPRReader, HailoLPRReader, PyTorchLPRReader
-except ImportError:
-    LPRReader = None
-    HailoLPRReader = None
-    PyTorchLPRReader = None
+    OCRPlateReader = None
 
 
 def load_config(path):
@@ -46,96 +33,30 @@ def load_config(path):
     return yaml.safe_load(expanded_content)
 
 
-def read_plate_from_api(api_url, plate_crop):
-    _, img_encoded = cv2.imencode('.jpg', plate_crop)
-    try:
-        response = requests.post(
-            api_url,
-            files={'image': ('plate.jpg', img_encoded.tobytes(), 'image/jpeg')},
-            timeout=3
-        )
-        if response.ok:
-            return response.json().get('plate', '').upper().strip()
-        else:
-            print(f"Plate API error: HTTP {response.status_code}")
-    except requests.RequestException as e:
-        print(f"Plate API request failed: {e}")
-    return ''
-
-
-def _api_read_worker(api_url, plate_crop, plate_matcher, result_queue):
-    """Send plate crop to OCR API in background, push result if successful."""
-    text = read_plate_from_api(api_url, plate_crop)
-    if text:
-        plate_matcher.push_plate(text)
-    result_queue.append((plate_crop, text))
-
-
 def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
     entry_cam_cfg = config.get('entry_camera', {})
     plate_det_cfg = config.get('plate_detection', {})
-    lpr_cfg = config.get('lpr', {})
 
-    # --- Plate detector (bounding box) ---
     try:
-        if plate_det_cfg.get('backend') == 'hailo':
-            plate_detector = HailoPlateDetector(
-                model_path=plate_det_cfg.get('hailo_model_path', 'models/plates/plate_detect_model.hef'),
-                conf=plate_det_cfg.get('confidence', 0.60),
-            )
-            print("Plate detector: Hailo NPU")
-        else:
-            plate_detector = PlateDetector(
-                model_path=plate_det_cfg.get('model_path', 'models/plates/plate_detect_model.pt'),
-                conf=plate_det_cfg.get('confidence', 0.60),
-            )
-            print("Plate detector: CPU")
+        plate_detector = PlateDetector(
+            model_path=plate_det_cfg.get('model_path', 'models/plates/plate_detect_model.pt'),
+            conf=plate_det_cfg.get('confidence', 0.60),
+        )
+        print("Plate detector: CPU")
     except Exception as e:
         print(f"Plate detector failed to load: {e}")
         return
 
-    # --- LPR reader (character recognition) ---
     lpr_reader = None
-    lpr_model = lpr_cfg.get('model_path', '')
-    lpr_hailo_model = lpr_cfg.get('hailo_model_path', '')
-    lpr_backend = lpr_cfg.get('backend', '')
-
-    # Auto-detect backend from file extension if not explicitly set
-    if not lpr_backend:
-        if lpr_model.endswith('.pth'):
-            lpr_backend = 'pytorch'
-        elif lpr_model.endswith('.onnx'):
-            lpr_backend = 'onnx'
-        elif lpr_hailo_model and os.path.isfile(lpr_hailo_model):
-            lpr_backend = 'hailo'
-
-    if lpr_backend == 'hailo' and HailoLPRReader is not None and os.path.isfile(lpr_hailo_model):
+    if OCRPlateReader is not None:
         try:
-            lpr_reader = HailoLPRReader(model_path=lpr_hailo_model)
-            print("LPR reader: Hailo NPU")
+            lpr_reader = OCRPlateReader()
+            print("LPR reader: Tesseract OCR")
         except Exception as e:
-            print(f"LPR reader (Hailo) failed: {e} — will use API fallback")
-    elif lpr_backend == 'onnx' and LPRReader is not None and os.path.isfile(lpr_model):
-        try:
-            lpr_reader = LPRReader(model_path=lpr_model)
-            print("LPR reader: ONNX CPU")
-        except Exception as e:
-            print(f"LPR reader (ONNX) failed: {e} — will use API fallback")
-    elif lpr_backend == 'pytorch' and PyTorchLPRReader is not None and os.path.isfile(lpr_model):
-        try:
-            lpr_reader = PyTorchLPRReader(model_path=lpr_model)
-            print("LPR reader: PyTorch CPU")
-        except Exception as e:
-            print(f"LPR reader (PyTorch) failed: {e} — will use API fallback")
-    else:
-        print(f"LPR reader: no model found (backend={lpr_backend!r}, path={lpr_model!r}) — will use API fallback")
+            print(f"LPR reader (Tesseract) failed: {e}")
 
-    # Fallback to API if no local LPR model
-    api_url = config.get('plate_reader', {}).get('api_url', '') if lpr_reader is None else ''
-    if lpr_reader is None and api_url:
-        print(f"LPR fallback: using API at {api_url}")
-    elif lpr_reader is None:
-        print("WARNING: No LPR reader and no API URL configured — plates will not be read")
+    if lpr_reader is None:
+        print("WARNING: No LPR reader configured — plates will not be read")
 
     try:
         grabber = LatestFrameGrabber(
@@ -166,7 +87,6 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
         if plates:
             print(f"Entry cam: {len(plates)} plate(s) detected")
 
-        annotated = frame
         for p in plates:
             x1, y1, x2, y2 = p.bbox
             plate_crop = crop_bbox(frame, p.bbox)
@@ -175,33 +95,22 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
 
             text = ''
             if lpr_reader is not None:
-                # On-device LPR — fast, no network call
                 try:
                     text = lpr_reader.read(plate_crop)
                 except Exception as e:
                     print(f"LPR read error: {e}")
                     text = ''
-            elif api_url:
-                # Fallback to API in background
-                t = threading.Thread(
-                    target=_api_read_worker,
-                    args=(api_url, plate_crop.copy(), plate_matcher, []),
-                    daemon=True
-                )
-                t.start()
 
             if text:
                 print(f"Plate read at entry: {text} (queue size: {plate_matcher.queue_size()})")
                 plate_matcher.push_plate(text)
-            elif lpr_reader is not None:
-                print(f"LPR returned empty for detected plate (crop size: {plate_crop.shape})")
 
             label = text if text else f"{p.conf:.2f}"
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(annotated, label, (x1, max(0, y1 - 8)),
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, label, (x1, max(0, y1 - 8)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
 
-        display_frame[0] = annotated
+        display_frame[0] = frame
 
     grabber.release()
 
@@ -217,18 +126,6 @@ def main():
         return
 
     det_cfg = config['detection']
-
-    if det_cfg.get('backend') == 'hailo':
-        hailo_detector = HailoVehicleDetector(
-            model_path=det_cfg.get('hailo_model_path', 'models/vehicle/vehicle_detect_model.hef'),
-            conf=det_cfg['confidence'],
-            classes=det_cfg.get('classes'),
-        )
-        print("Vehicle detector: Hailo NPU")
-    else:
-        hailo_detector = None
-        print("Vehicle detector: CPU")
-
     headless = config.get('display', {}).get('headless', False)
 
     tracker = VehicleTracker(
@@ -238,8 +135,8 @@ def main():
         fps=config['camera']['fps'],
         process_every_n=det_cfg.get('process_every_n', 1),
         imgsz=det_cfg.get('imgsz', 416),
-        detector=hailo_detector,
     )
+    print("Vehicle detector: CPU")
     space_manager = SpaceManager(config['spaces']['config'])
     plate_matcher = PlateMatcher(config)
     database      = VehicleDatabase('data/database.db')

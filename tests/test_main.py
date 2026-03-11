@@ -1,10 +1,9 @@
 """Tests for main.py helper functions and config loading."""
 
-import os
 import pytest
 import numpy as np
 
-from main import load_config, read_plate_from_api
+from main import load_config
 
 
 # ---------------------------------------------------------------------------
@@ -39,17 +38,32 @@ class TestLoadConfig:
 
 
 # ---------------------------------------------------------------------------
-# read_plate_from_api
+# OCRPlateReader
 # ---------------------------------------------------------------------------
 
-class TestReadPlateFromAPI:
+class TestOCRPlateReader:
 
-    def test_returns_empty_on_bad_url(self):
-        img = np.zeros((50, 100, 3), dtype=np.uint8)
-        result = read_plate_from_api("http://127.0.0.1:1", img)
-        assert result == ''
+    def test_reads_synthetic_plate(self):
+        import cv2
+        from src.lprReader import OCRPlateReader
 
-    def test_returns_empty_on_empty_url(self):
-        img = np.zeros((50, 100, 3), dtype=np.uint8)
-        result = read_plate_from_api("", img)
-        assert result == ''
+        reader = OCRPlateReader()
+        plate = np.ones((80, 240, 3), dtype=np.uint8) * 255
+        cv2.putText(plate, "ABC1234", (20, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 3)
+        result = reader.read(plate)
+        assert len(result) >= 4
+        assert all(c in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" for c in result)
+
+    def test_returns_empty_on_blank(self):
+        from src.lprReader import OCRPlateReader
+
+        reader = OCRPlateReader()
+        blank = np.zeros((80, 240, 3), dtype=np.uint8)
+        assert reader.read(blank) == ''
+
+    def test_returns_empty_on_none(self):
+        from src.lprReader import OCRPlateReader
+
+        reader = OCRPlateReader()
+        assert reader.read(None) == ''
