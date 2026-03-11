@@ -6,7 +6,7 @@ echo "=== Parking Monitor Setup ==="
 # System dependencies
 echo "Installing system packages..."
 sudo apt update
-sudo apt install -y tesseract-ocr libatlas-base-dev python3-pip python3-venv
+sudo apt install -y python3-pip python3-venv libopenblas-dev
 
 # Python virtual environment
 echo "Setting up Python environment..."
