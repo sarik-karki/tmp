@@ -1,5 +1,5 @@
 display:
-  headless: true
+  headless: false
 
 camera:
   source: 0  # 0 for USB/CSI camera, or rtsp://... for network camera
@@ -8,9 +8,9 @@ camera:
   fps: 10
 
 detection:
-  model_path: models/vehicle/vehicle_detect_model.pt
+  model_path: yolov8s.pt
   confidence: 0.5
-  classes: [2,5,7]
+  classes: [2,3,5,7]  # car, motorcycle, bus, truck (COCO)
   imgsz: 416
   process_every_n: 3
 
@@ -35,4 +35,4 @@ lpr:
   backend: ocr
 
 entry_zone:
-  polygon: [[0, 600], [200, 600], [200, 720], [0, 720]]
+  polygon: [[0, 0], [1280, 0], [1280, 720], [0, 720]]

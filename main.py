@@ -40,9 +40,9 @@ def entry_camera_loop(config, plate_matcher, database, stop_event, display_frame
     if OCRPlateReader is not None:
         try:
             lpr_reader = OCRPlateReader()
-            print("LPR reader: Tesseract OCR")
+            print("LPR reader: fast-plate-ocr")
         except Exception as e:
-            print(f"LPR reader (Tesseract) failed: {e}")
+            print(f"LPR reader failed: {e}")
 
     if lpr_reader is None:
         print("WARNING: No LPR reader configured — plates will not be read")
@@ -74,8 +74,6 @@ def entry_camera_loop(config, plate_matcher, database, stop_event, display_frame
                 continue
 
             plates = plate_detector.detect(frame)
-            if plates:
-                print(f"Entry cam: {len(plates)} plate(s) detected")
 
             for p in plates:
                 x1, y1, x2, y2 = p.bbox
@@ -100,7 +98,7 @@ def entry_camera_loop(config, plate_matcher, database, stop_event, display_frame
                         database.record_violation(text, "No valid parking permit")
                         print(f"VIOLATION: No permit for {text}")
 
-                label = text if text else f"{p.conf:.2f}"
+                label = text or (lpr_reader.last_plate if lpr_reader else '') or f"{p.conf:.2f}"
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, label, (x1, max(0, y1 - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)

@@ -42,8 +42,6 @@ class PlateMatcher:
                 self.track_plate_map[track_id] = entry['plate']
                 print(f"Plate matched: track #{track_id} -> {entry['plate']}")
             else:
-                if track_id not in self.unmatched_tracks:
-                    print(f"Vehicle #{track_id} in entry zone, waiting for plate...")
                 self.unmatched_tracks[track_id] = time.time()
 
     def get_plate(self, track_id):

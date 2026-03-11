@@ -50,7 +50,7 @@ class TestExternalDetector:
 
     def test_new_vehicle_enters(self, ext_tracker):
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
         ]
         vehicles = ext_tracker.update(frame())
         assert len(vehicles) == 1
@@ -58,7 +58,7 @@ class TestExternalDetector:
 
     def test_tracked_vehicle_persists(self, ext_tracker):
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
         ]
         ext_tracker.update(frame())
         # Same position — should match by IoU
@@ -68,14 +68,14 @@ class TestExternalDetector:
 
     def test_iou_matching(self, ext_tracker):
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 100, 100), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 100, 100), conf=0.9, cls=2),
         ]
         ext_tracker.update(frame())
         tid = ext_tracker.get_entered()[0]['track_id']
 
         # Move slightly — should match same track
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(15, 15, 105, 105), conf=0.9, cls=1),
+            FakeDet(bbox=(15, 15, 105, 105), conf=0.9, cls=2),
         ]
         ext_tracker.update(frame())
         assert ext_tracker.get_entered() == []
@@ -83,14 +83,14 @@ class TestExternalDetector:
 
     def test_new_detection_gets_new_id(self, ext_tracker):
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
         ]
         ext_tracker.update(frame())
         tid1 = ext_tracker.get_entered()[0]['track_id']
 
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
-            FakeDet(bbox=(400, 400, 450, 450), conf=0.8, cls=0),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
+            FakeDet(bbox=(400, 400, 450, 450), conf=0.8, cls=5),
         ]
         ext_tracker.update(frame())
         entered = ext_tracker.get_entered()
@@ -105,7 +105,7 @@ class TestExternalDetector:
 
     def test_vehicle_exit_after_timeout(self, ext_tracker):
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
         ]
         ext_tracker.update(frame())
 
@@ -128,7 +128,7 @@ class TestFrameSkipping:
     def test_process_every_n_skips_frames(self):
         detector = FakeDetector()
         detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
         ]
         t = VehicleTracker(
             model_path='unused.pt',
@@ -157,7 +157,7 @@ class TestFrameSkipping:
     def test_process_every_1_never_skips(self):
         detector = FakeDetector()
         detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
         ]
         t = VehicleTracker(
             model_path='unused.pt',
@@ -168,8 +168,8 @@ class TestFrameSkipping:
         assert len(t.get_entered()) == 1
 
         detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
-            FakeDet(bbox=(300, 300, 350, 350), conf=0.8, cls=0),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
+            FakeDet(bbox=(300, 300, 350, 350), conf=0.8, cls=5),
         ]
         t.update(frame())
         assert len(t.get_entered()) == 1  # only the new one
@@ -212,34 +212,32 @@ class TestTrackInfo:
 
     def test_get_track_info(self, ext_tracker):
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
         ]
         ext_tracker.update(frame())
         tid = ext_tracker.get_entered()[0]['track_id']
         info = ext_tracker.get_track_info(tid)
         assert 'first_seen' in info
         assert 'entry_position' in info
-        assert info['class_name'] == 'car'
+        assert info['class_name'] == 'car'  # cls=2 -> car (COCO)
 
     def test_get_track_info_nonexistent(self, ext_tracker):
         assert ext_tracker.get_track_info(9999) is None
 
     def test_class_names(self, ext_tracker):
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=0),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=5),
         ]
         ext_tracker.update(frame())
         assert ext_tracker.get_entered()[0]['class_name'] == 'bus'
 
     def test_unknown_class(self, ext_tracker):
-        # cls=99 is not in vehicle_classes [0,1,2,3], so it gets filtered
-        # by _update_with_external_detector. Use cls=3 (shuttle) which IS
-        # in vehicle_classes but has a known name.
+        # cls=7 is truck in COCO mapping
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=3),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=7),
         ]
         ext_tracker.update(frame())
-        assert ext_tracker.get_entered()[0]['class_name'] == 'shuttle'
+        assert ext_tracker.get_entered()[0]['class_name'] == 'truck'
 
     def test_unknown_class_name_mapping(self):
         # Test _get_class_name directly for an unmapped class
@@ -249,7 +247,7 @@ class TestTrackInfo:
 
     def test_reset(self, ext_tracker):
         ext_tracker._fake_detector.detections = [
-            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=1),
+            FakeDet(bbox=(10, 10, 50, 50), conf=0.9, cls=2),
         ]
         ext_tracker.update(frame())
         ext_tracker.reset()

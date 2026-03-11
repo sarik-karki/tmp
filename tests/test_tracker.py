@@ -55,9 +55,9 @@ def test_new_vehicle_enters(tracker):
 
 
 def test_vehicle_class_name(tracker):
-    update_with(tracker, [1], [[10,10,50,50]], [0], [0.9])
+    update_with(tracker, [1], [[10,10,50,50]], [2], [0.9])
     vehicles = tracker.get_entered()
-    assert vehicles[0]['class_name'] == 'bus'
+    assert vehicles[0]['class_name'] == 'car'
 
 
 def test_reset(tracker):

@@ -1,8 +1,7 @@
 """
-License plate reader using Tesseract OCR.
+License plate reader using fast-plate-ocr.
 
 Takes a cropped plate image and returns the plate text string.
-Lightweight — no PyTorch/ONNX dependency, fast on Pi.
 
 Usage:
     reader = OCRPlateReader()
@@ -11,53 +10,55 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Optional
+import time
 
-import numpy as np
 import cv2
+import numpy as np
+
+from fast_plate_ocr import LicensePlateRecognizer
 
 
 class OCRPlateReader:
-    """
-    Reads license plate text using Tesseract OCR.
-    Requires: sudo apt install tesseract-ocr (Pi) or brew install tesseract (macOS)
-    """
 
     _ALLOWED = set('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
-    def __init__(self, **_kwargs) -> None:
-        try:
-            import pytesseract
-            self._pytesseract = pytesseract
-        except ImportError:
-            raise ImportError(
-                "pytesseract is not installed. Install with: pip install pytesseract"
-            )
-        try:
-            self._pytesseract.get_tesseract_version()
-        except Exception:
-            raise RuntimeError(
-                "tesseract binary not found. Install with: "
-                "sudo apt install tesseract-ocr (Pi) or brew install tesseract (macOS)"
-            )
+    def __init__(self, cooldown: float = 2.0, **_kwargs) -> None:
+        self._recognizer = LicensePlateRecognizer(
+            hub_ocr_model='global-plates-mobile-vit-v2-model',
+            device='cpu',
+        )
+        self._last_plate = ''
+        self._last_read_time = 0.0
+        self._cooldown = cooldown
 
     def read(self, plate_crop: np.ndarray) -> str:
+        """Returns plate text, or '' if skipped (cooldown/dedup)."""
         if plate_crop is None or plate_crop.size == 0:
             return ''
 
-        processed = self._preprocess(plate_crop)
-        text = self._pytesseract.image_to_string(
-            processed,
-            config='--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-        )
-        return ''.join(c for c in text.strip().upper() if c in self._ALLOWED)
+        now = time.time()
+        if now - self._last_read_time < self._cooldown:
+            return ''
 
-    @staticmethod
-    def _preprocess(img: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        gray = cv2.GaussianBlur(gray, (3, 3), 0)
-        gray = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
-        )
-        return gray
+        self._last_read_time = now
+
+        if plate_crop.ndim == 3 and plate_crop.shape[2] == 3:
+            plate_crop = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY)
+
+        results = self._recognizer.run(plate_crop)
+        if not results:
+            return ''
+
+        text = results[0].strip().upper()
+        plate = ''.join(c for c in text if c in self._ALLOWED)
+
+        if plate and plate == self._last_plate:
+            return ''
+
+        self._last_plate = plate
+        return plate
+
+    @property
+    def last_plate(self) -> str:
+        """Last successfully read plate — useful for display overlay."""
+        return self._last_plate

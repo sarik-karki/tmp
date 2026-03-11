@@ -30,7 +30,7 @@ class VehicleTracker:
         else:
             self.model = None
 
-        self.vehicle_classes = [0, 1, 2, 3]
+        self.vehicle_classes = [2, 3, 5, 7]  # COCO: car, motorcycle, bus, truck
 
         self.active_tracks = {}
         self.track_history = {}
@@ -267,7 +267,7 @@ class VehicleTracker:
         return (int((x1 + x2) / 2), int((y1 + y2) / 2))
 
     def _get_class_name(self, class_id):
-        names = {0: 'bus', 1: 'car', 2: 'motorcycle', 3: 'shuttle'}
+        names = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
         return names.get(class_id, 'vehicle')
 
     def reset(self):

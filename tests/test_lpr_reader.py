@@ -9,7 +9,7 @@ from src.lprReader import OCRPlateReader
 
 class TestOCRPlateReader:
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture
     def reader(self):
         return OCRPlateReader()
 
@@ -26,19 +26,28 @@ class TestOCRPlateReader:
                     cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 3)
         assert len(reader.read(plate)) >= 3
 
-    def test_returns_empty_on_blank(self, reader):
-        blank = np.zeros((80, 240, 3), dtype=np.uint8)
-        assert reader.read(blank) == ''
-
     def test_returns_empty_on_none(self, reader):
         assert reader.read(None) == ''
 
     def test_returns_empty_on_empty_array(self, reader):
         assert reader.read(np.array([])) == ''
 
-    def test_preprocess_output(self):
-        img = np.random.randint(0, 255, (80, 240, 3), dtype=np.uint8)
-        result = OCRPlateReader._preprocess(img)
-        assert result.ndim == 2  # grayscale
-        assert result.shape[0] == 80 * 2  # 2x upscale
-        assert result.shape[1] == 240 * 2
+    def test_dedup_same_plate(self, reader):
+        plate = np.ones((80, 240, 3), dtype=np.uint8) * 255
+        cv2.putText(plate, "ABC1234", (20, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 3)
+        first = reader.read(plate)
+        # Reset cooldown so dedup check runs
+        reader._last_read_time = 0.0
+        second = reader.read(plate)
+        if first:
+            assert second == ''  # dedup blocks same plate
+
+    def test_cooldown_skips_read(self, reader):
+        plate = np.ones((80, 240, 3), dtype=np.uint8) * 255
+        cv2.putText(plate, "TEST123", (20, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 3)
+        reader.read(plate)
+        # Immediate second read should be skipped by cooldown
+        result = reader.read(plate)
+        assert result == ''

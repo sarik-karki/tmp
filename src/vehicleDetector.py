@@ -23,7 +23,7 @@ import numpy as np
 
 try:
     from ultralytics import YOLO
-except Exception as e: 
+except Exception:
     YOLO = None
 
 
