@@ -18,20 +18,6 @@ class TestLoadConfig:
         config = load_config(str(cfg))
         assert config['camera']['fps'] == 10
 
-    def test_expands_env_vars(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("TEST_URL", "rtsp://example.com")
-        cfg = tmp_path / "test.yaml"
-        cfg.write_text("camera:\n  source: ${TEST_URL}\n")
-        config = load_config(str(cfg))
-        assert config['camera']['source'] == "rtsp://example.com"
-
-    def test_missing_env_var_raises(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("MISSING_VAR_XYZ", raising=False)
-        cfg = tmp_path / "test.yaml"
-        cfg.write_text("camera:\n  source: ${MISSING_VAR_XYZ}\n")
-        with pytest.raises(EnvironmentError, match="Missing environment variables"):
-            load_config(str(cfg))
-
     def test_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             load_config("/nonexistent/config.yaml")

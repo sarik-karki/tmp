@@ -2,7 +2,7 @@ display:
   headless: true
 
 camera:
-  source: ${CAMERA_URL}
+  source: 0  # 0 for USB/CSI camera, or rtsp://... for network camera
   width: 1280
   height: 720
   fps: 10
@@ -20,18 +20,13 @@ plate_detection:
 
 tracking:
   config: config/bytetrack.yaml
-  max_age: 30 
+  max_age: 30
 
 spaces:
   config: config/parking_spaces.json
 
-alerts:
-  enabled: true
-  cooldown_seconds: 30
-  email: ${ALERT_EMAIL}
-
 entry_camera:
-  source: ${ENTRY_CAMERA_URL}
+  source: 2  # 1 for second USB camera, or rtsp://... for network camera
   width: 640
   height: 480
   fps: 5
@@ -41,5 +36,3 @@ lpr:
 
 entry_zone:
   polygon: [[0, 600], [200, 600], [200, 720], [0, 720]]
-
-

@@ -1,6 +1,7 @@
 """
 Full system demo: VehicleTracker + SpaceManager + PlateMatcher + VehicleDatabase
 Simulates the complete main.py pipeline with mocked YOLO and no real cameras.
+Includes permit checking and violation logging.
 """
 from unittest.mock import MagicMock, patch
 import numpy as np
@@ -11,6 +12,7 @@ from src.tracker import VehicleTracker
 from src.space_manager import SpaceManager
 from src.match import PlateMatcher
 from src.database import VehicleDatabase
+from main import _DEMO_VEHICLES, _seed_demo_data
 
 SPACES_FILE   = 'config/parking_spaces.json'
 WIDTH, HEIGHT = 1280, 720
@@ -21,17 +23,17 @@ TOTAL_FRAMES  = 420
 
 DEMO_CONFIG = {
     'entry_zone':  {'polygon': [[0, 600], [200, 600], [200, 720], [0, 720]]},
-    'plate_reader': {'poll_interval': 1},
 }
 
 ENTRY_POS = (50, 660)
 
+# Use plates from the seeded demo data + one unknown plate
 # (track_id, plate, space, plate_frame, enter_frame, park_frame, leave_frame)
 SCENARIOS = [
-    (1, '7ABC123', 'A1',   0,  25,  80, 180),
-    (2, '3XYZ999', 'A2',  50,  75, 130, 230),
-    (3, '5DEF456', 'B1',  100, 125, 180, 300),
-    (4, '2GHI789', 'A3',  150, 175, 230, 350),
+    (1, 'ABC1234', 'A1',   0,  25,  80, 180),   # Alice - staff permit
+    (2, 'XYZ7890', 'A2',  50,  75, 130, 230),   # Bob - monthly permit
+    (3, 'DEF4567', 'B1',  100, 125, 180, 300),   # Carol - annual permit
+    (4, 'UNKNOWN1', 'A3', 150, 175, 230, 350),   # No permit - violation
 ]
 
 
@@ -84,7 +86,7 @@ def draw_lot(frame, sm, tracker, plate_matcher, entry_log):
     return frame
 
 
-def draw_panel(frame, plate_matcher, entry_log, exit_log, db_count):
+def draw_panel(frame, plate_matcher, entry_log, exit_log, violation_log, db_count):
     panel = np.full((HEIGHT, PANEL_W, 3), 20, dtype=np.uint8)
     y = 30
 
@@ -106,7 +108,7 @@ def draw_panel(frame, plate_matcher, entry_log, exit_log, db_count):
     cv2.line(panel, (10, y), (PANEL_W - 10, y), (60, 60, 60), 1)
     y += 12
 
-    text('ACTIVE VEHICLES', (0, 200, 255), scale=0.65, bold=True)
+    text('PERMIT STATUS', (0, 200, 255), scale=0.65, bold=True)
     active = plate_matcher.get_all()
     if active:
         for tid, plate in active.items():
@@ -114,6 +116,14 @@ def draw_panel(frame, plate_matcher, entry_log, exit_log, db_count):
     else:
         text('  (none)', (100, 100, 100))
     y += 10
+
+    if violation_log:
+        cv2.line(panel, (10, y), (PANEL_W - 10, y), (60, 60, 60), 1)
+        y += 12
+        text('VIOLATIONS', (0, 0, 255), scale=0.65, bold=True)
+        for entry in violation_log[-4:]:
+            text(f'  {entry}', (0, 100, 255))
+        y += 10
 
     cv2.line(panel, (10, y), (PANEL_W - 10, y), (60, 60, 60), 1)
     y += 12
@@ -136,6 +146,7 @@ def main():
     db_fd, db_path = tempfile.mkstemp(suffix='.db')
     os.close(db_fd)
     database = VehicleDatabase(db_path)
+    _seed_demo_data(database)
 
     with patch('src.tracker.YOLO') as MockYOLO:
         mock_model = MagicMock()
@@ -146,6 +157,7 @@ def main():
 
         entry_log      = []
         exit_log       = []
+        violation_log  = []
         db_count       = 0
         track_space    = {}
         frame_num      = 0
@@ -162,6 +174,13 @@ def main():
                     plate_matcher.push_plate(plate)
                     entry_log.append(plate)
 
+                    if database.check_permit(plate):
+                        print(f"Permit valid for {plate}")
+                    else:
+                        database.record_violation(plate, "No valid parking permit")
+                        violation_log.append(f"{plate} - No permit")
+                        print(f"VIOLATION: No permit for {plate}")
+
             # --- Build mocked YOLO detections ---
             active = []
             for scenario in SCENARIOS:
@@ -175,7 +194,7 @@ def main():
             blank = np.full((HEIGHT, LOT_W, 3), 35, dtype=np.uint8)
             vehicles = tracker.update(blank)
 
-            # --- Pipe tracker → space manager ---
+            # --- Pipe tracker -> space manager ---
             occupancy = sm.update_occupancy(vehicles)
 
             # Update last known space per track
@@ -210,7 +229,7 @@ def main():
             canvas = np.full((HEIGHT, WIDTH, 3), 35, dtype=np.uint8)
             lot = draw_lot(blank, sm, tracker, plate_matcher, entry_log)
             canvas[0:HEIGHT, 0:LOT_W] = lot
-            draw_panel(canvas, plate_matcher, entry_log, exit_log, db_count)
+            draw_panel(canvas, plate_matcher, entry_log, exit_log, violation_log, db_count)
 
             cv2.putText(canvas, f"Frame {f}/{TOTAL_FRAMES}",
                         (LOT_W + 10, HEIGHT - 15),
@@ -226,6 +245,7 @@ def main():
                 sm.update_occupancy([])
                 entry_log.clear()
                 exit_log.clear()
+                violation_log.clear()
                 track_space.clear()
                 db_count = 0
                 frame_num = 0

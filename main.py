@@ -1,10 +1,7 @@
 import threading
 import time
-import os
-import re
 import cv2
 import yaml
-from dotenv import load_dotenv
 
 from src.tracker import VehicleTracker
 from src.space_manager import SpaceManager
@@ -22,18 +19,10 @@ except ImportError:
 
 def load_config(path):
     with open(path, 'r') as f:
-        content = f.read()
-    expanded_content = os.path.expandvars(content)
-    missing_vars = re.findall(r'\${?([\w\.\-]+)}?', expanded_content)
-    if missing_vars:
-        raise EnvironmentError(
-            f"Missing environment variables: {', '.join(set(missing_vars))}. "
-            "Please check your .env file."
-        )
-    return yaml.safe_load(expanded_content)
+        return yaml.safe_load(f)
 
 
-def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
+def entry_camera_loop(config, plate_matcher, database, stop_event, display_frame):
     entry_cam_cfg = config.get('entry_camera', {})
     plate_det_cfg = config.get('plate_detection', {})
 
@@ -73,51 +62,82 @@ def entry_camera_loop(config, plate_matcher, stop_event, display_frame):
 
     print("Entry camera running.")
 
-    while not stop_event.is_set():
-        if not grabber.has_new_frame():
-            time.sleep(0.02)
-            continue
-
-        ok, frame = grabber.read()
-        if not ok:
-            time.sleep(0.1)
-            continue
-
-        plates = plate_detector.detect(frame)
-        if plates:
-            print(f"Entry cam: {len(plates)} plate(s) detected")
-
-        for p in plates:
-            x1, y1, x2, y2 = p.bbox
-            plate_crop = crop_bbox(frame, p.bbox)
-            if plate_crop is None:
+    try:
+        while not stop_event.is_set():
+            if not grabber.has_new_frame():
+                time.sleep(0.02)
                 continue
 
-            text = ''
-            if lpr_reader is not None:
-                try:
-                    text = lpr_reader.read(plate_crop)
-                except Exception as e:
-                    print(f"LPR read error: {e}")
-                    text = ''
+            ok, frame = grabber.read()
+            if not ok:
+                time.sleep(0.1)
+                continue
 
-            if text:
-                print(f"Plate read at entry: {text} (queue size: {plate_matcher.queue_size()})")
-                plate_matcher.push_plate(text)
+            plates = plate_detector.detect(frame)
+            if plates:
+                print(f"Entry cam: {len(plates)} plate(s) detected")
 
-            label = text if text else f"{p.conf:.2f}"
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, label, (x1, max(0, y1 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+            for p in plates:
+                x1, y1, x2, y2 = p.bbox
+                plate_crop = crop_bbox(frame, p.bbox)
+                if plate_crop is None:
+                    continue
 
-        display_frame[0] = frame
+                text = ''
+                if lpr_reader is not None:
+                    try:
+                        text = lpr_reader.read(plate_crop)
+                    except Exception as e:
+                        print(f"LPR read error: {e}")
+                        text = ''
 
-    grabber.release()
+                if text:
+                    print(f"Plate read at entry: {text} (queue size: {plate_matcher.queue_size()})")
+                    plate_matcher.push_plate(text)
+                    if database.check_permit(text):
+                        print(f"Permit valid for {text}")
+                    else:
+                        database.record_violation(text, "No valid parking permit")
+                        print(f"VIOLATION: No permit for {text}")
+
+                label = text if text else f"{p.conf:.2f}"
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, label, (x1, max(0, y1 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+
+            display_frame[0] = frame
+    except Exception as e:
+        print(f"Entry camera thread crashed: {e}")
+    finally:
+        grabber.release()
+
+
+_DEMO_VEHICLES = [
+    ("ABC1234", "Alice Johnson",   "staff",    "2026-12-31"),
+    ("XYZ7890", "Bob Smith",       "monthly",  "2026-06-30"),
+    ("DEF4567", "Carol Davis",     "annual",   "2027-01-15"),
+    ("GHI8901", "Dan Wilson",      "staff",    "2026-12-31"),
+    ("JKL2345", "Eva Martinez",    "monthly",  "2026-09-01"),
+    ("MNO6789", "Frank Lee",       "daily",    "2026-03-15"),
+    ("PQR3456", "Grace Kim",       "annual",   "2027-06-30"),
+    ("STU9012", "Hank Brown",      "staff",    "2026-12-31"),
+    ("VWX5678", "Ivy Chen",        "monthly",  "2026-08-01"),
+    ("YZA0123", "Jack Taylor",     "annual",   "2027-03-01"),
+]
+
+
+def _seed_demo_data(database):
+    """Load demo vehicles and permits if the database is empty."""
+    existing = database.conn.execute("SELECT COUNT(*) FROM vehicles").fetchone()[0]
+    if existing > 0:
+        return
+    for plate, owner, permit_type, expiry in _DEMO_VEHICLES:
+        database.add_vehicle(plate, owner)
+        database.add_permit(plate, permit_type, expiry)
+    print(f"Seeded {len(_DEMO_VEHICLES)} demo vehicles with permits")
 
 
 def main():
-    load_dotenv()
-
     try:
         config = load_config('config/settings.yaml')
         print("Config loaded successfully!")
@@ -139,91 +159,87 @@ def main():
     print("Vehicle detector: CPU")
     space_manager = SpaceManager(config['spaces']['config'])
     plate_matcher = PlateMatcher(config)
-    database      = VehicleDatabase('data/database.db')
 
-    stop_event    = threading.Event()
-    entry_display = [None]  # shared frame holder: entry thread writes, main thread displays
-    entry_thread  = threading.Thread(
-        target=entry_camera_loop,
-        args=(config, plate_matcher, stop_event, entry_display),
-        daemon=True
-    )
-    entry_thread.start()
+    with VehicleDatabase('data/database.db') as database:
+        _seed_demo_data(database)
 
-    cam_cfg = config['camera']
-    grabber = LatestFrameGrabber(
-        source=cam_cfg['source'],
-        backend=cv2.CAP_V4L2,
-        width=cam_cfg.get('width', 640),
-        height=cam_cfg.get('height', 480),
-        warmup_frames=30,
-        target_fps=cam_cfg.get('fps', 10),
-    )
-    print("Running — press Q to quit.")
+        stop_event    = threading.Event()
+        entry_display = [None]
+        entry_thread  = threading.Thread(
+            target=entry_camera_loop,
+            args=(config, plate_matcher, database, stop_event, entry_display),
+            daemon=True
+        )
+        entry_thread.start()
 
-    try:
-        while True:
-            ok, frame = grabber.read()
-            if not ok:
-                time.sleep(0.01)
-                continue
+        cam_cfg = config['camera']
+        grabber = LatestFrameGrabber(
+            source=cam_cfg['source'],
+            backend=cv2.CAP_V4L2,
+            width=cam_cfg.get('width', 640),
+            height=cam_cfg.get('height', 480),
+            warmup_frames=30,
+            target_fps=cam_cfg.get('fps', 10),
+        )
+        print("Running — press Q to quit.")
 
-            # Feed frame directly to tracker — it handles resize internally via imgsz
-            vehicles = tracker.update(frame)
+        try:
+            while True:
+                ok, frame = grabber.read()
+                if not ok:
+                    time.sleep(0.01)
+                    continue
 
-            space_manager.update_occupancy(vehicles)
-
-            # Try to assign plates to ALL vehicles in the entry zone,
-            # not just newly entered — a vehicle may reach the zone after first appearing
-            for v in vehicles:
-                plate_matcher.try_assign(v['track_id'], v['center'])
-
-            for v in tracker.get_exited():
-                plate      = plate_matcher.get_plate(v['track_id'])
-                space      = space_manager.get_vehicle_space(v['track_id'])
-                track_info = tracker.get_track_info(v['track_id'])
-                entry_time = track_info['first_seen'] if track_info else None
-                database.log_exit(
-                    track_id=v['track_id'],
-                    plate=plate,
-                    space=space,
-                    entry_time=entry_time,
-                    exit_time=v['exit_time']
-                )
-                print(f"Logged exit — plate: {plate}  space: {space}  duration: {v['duration']:.1f}s")
-                plate_matcher.release(v['track_id'])
-
-            if not headless:
-                frame = space_manager.draw_spaces(frame)
-
-                # Draw the entry zone to help debugging
-                cv2.polylines(frame, [plate_matcher.entry_zone], isClosed=True, color=(0, 255, 255), thickness=2)
-                cv2.putText(frame, "Entry Zone", (plate_matcher.entry_zone[0][0][0], plate_matcher.entry_zone[0][0][1] - 5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                vehicles = tracker.update(frame)
+                space_manager.update_occupancy(vehicles)
 
                 for v in vehicles:
-                    x1, y1, x2, y2 = [int(c) for c in v['bbox']]
-                    plate = plate_matcher.get_plate(v['track_id'])
-                    label = plate if plate else v['class_name']
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 200, 0), 2)
-                    cv2.putText(frame, f"{label} #{v['track_id']}",
-                                (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
+                    plate_matcher.try_assign(v['track_id'], v['center'])
 
-                summary = space_manager.get_occupancy_summary()
-                cv2.putText(frame, f"Spaces: {summary['occupied']}/{summary['total']} occupied",
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                for v in tracker.get_exited():
+                    plate      = plate_matcher.get_plate(v['track_id'])
+                    space      = space_manager.get_vehicle_space(v['track_id'])
+                    track_info = tracker.get_track_info(v['track_id'])
+                    entry_time = track_info['first_seen'] if track_info else None
+                    database.log_exit(
+                        track_id=v['track_id'],
+                        plate=plate,
+                        space=space,
+                        entry_time=entry_time,
+                        exit_time=v['exit_time']
+                    )
+                    print(f"Logged exit — plate: {plate}  space: {space}  duration: {v['duration']:.1f}s")
+                    plate_matcher.release(v['track_id'])
 
-                cv2.imshow('Parking Monitor', frame)
-                if entry_display[0] is not None:
-                    cv2.imshow('Entry Camera', entry_display[0])
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+                if not headless:
+                    frame = space_manager.draw_spaces(frame)
 
-    finally:
-        stop_event.set()
-        grabber.release()
-        database.close()
-        cv2.destroyAllWindows()
+                    cv2.polylines(frame, [plate_matcher.entry_zone], isClosed=True, color=(0, 255, 255), thickness=2)
+                    cv2.putText(frame, "Entry Zone", (plate_matcher.entry_zone[0][0][0], plate_matcher.entry_zone[0][0][1] - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+                    for v in vehicles:
+                        x1, y1, x2, y2 = [int(c) for c in v['bbox']]
+                        plate = plate_matcher.get_plate(v['track_id'])
+                        label = plate if plate else v['class_name']
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 200, 0), 2)
+                        cv2.putText(frame, f"{label} #{v['track_id']}",
+                                    (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 1)
+
+                    summary = space_manager.get_occupancy_summary()
+                    cv2.putText(frame, f"Spaces: {summary['occupied']}/{summary['total']} occupied",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+                    cv2.imshow('Parking Monitor', frame)
+                    if entry_display[0] is not None:
+                        cv2.imshow('Entry Camera', entry_display[0])
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+
+        finally:
+            stop_event.set()
+            grabber.release()
+            cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':

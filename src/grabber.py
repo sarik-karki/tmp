@@ -7,6 +7,9 @@ class LatestFrameGrabber:
 
     def __init__(self, source=0, backend=None, width=None, height=None,
                  warmup_frames=0, target_fps=None):
+        # Convert numeric strings to int for local camera indices
+        if isinstance(source, str) and source.isdigit():
+            source = int(source)
         if backend is not None:
             self.cap = cv2.VideoCapture(source, backend)
         else:
