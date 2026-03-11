@@ -10,3 +10,10 @@ data/logs/
 __pycache__/
 *.pyc
 venv311/
+
+#pictures
+cam_test_0.jpg
+cam_test_1.jpg
+cam_test_2.jpg
+config/parking_spaces_preview.png
+config/parkinglot.png

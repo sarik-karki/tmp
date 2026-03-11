@@ -2,7 +2,7 @@ display:
   headless: false
 
 camera:
-  source: 0  # 0 for USB/CSI camera, or rtsp://... for network camera
+  source: 1  # 0 for USB/CSI camera, or rtsp://... for network camera
   width: 1280
   height: 720
   fps: 10
@@ -27,8 +27,8 @@ spaces:
 
 entry_camera:
   source: 2  # 1 for second USB camera, or rtsp://... for network camera
-  width: 640
-  height: 480
+  width: 1280
+  height: 720
   fps: 5
 
 lpr:

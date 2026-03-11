@@ -50,7 +50,7 @@ def entry_camera_loop(config, plate_matcher, database, stop_event, display_frame
     try:
         grabber = LatestFrameGrabber(
             source=entry_cam_cfg['source'],
-            backend=cv2.CAP_V4L2,
+            backend=cv2.CAP_DSHOW,
             width=entry_cam_cfg.get('width', 640),
             height=entry_cam_cfg.get('height', 480),
             warmup_frames=30,
@@ -111,7 +111,7 @@ def entry_camera_loop(config, plate_matcher, database, stop_event, display_frame
 
 
 _DEMO_VEHICLES = [
-    ("ABC1234", "Alice Johnson",   "staff",    "2026-12-31"),
+    ("7EGN216", "Natalie Wu",   "staff",    "2026-12-31"),
     ("XYZ7890", "Bob Smith",       "monthly",  "2026-06-30"),
     ("DEF4567", "Carol Davis",     "annual",   "2027-01-15"),
     ("GHI8901", "Dan Wilson",      "staff",    "2026-12-31"),
@@ -173,7 +173,7 @@ def main():
         cam_cfg = config['camera']
         grabber = LatestFrameGrabber(
             source=cam_cfg['source'],
-            backend=cv2.CAP_V4L2,
+            backend=cv2.CAP_DSHOW,
             width=cam_cfg.get('width', 640),
             height=cam_cfg.get('height', 480),
             warmup_frames=30,

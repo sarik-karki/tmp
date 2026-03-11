@@ -81,7 +81,7 @@ class PlateMatcher:
         entry = self.plate_queue.popleft()
         self.track_plate_map[oldest_track] = entry['plate']
         del self.unmatched_tracks[oldest_track]
-        print(f"Late plate match: track #{oldest_track} -> {entry['plate']}")
+        print(f"License plate plate match: track #{oldest_track} -> {entry['plate']}")
 
     def get_all(self):
         return dict(self.track_plate_map)
